@@ -69,7 +69,7 @@ import Data.Aeson (FromJSON, ToJSON, Value (..), object, (.=))
 import Data.Char (isAsciiLower, isControl, isDigit, isHexDigit, ord, toLower)
 import Data.Containers.ListUtils (nubOrd)
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Scientific (fromFloatDigits, isInteger, toBoundedInteger, toRealFloat)
 import Data.Text (Text)
 import Data.Traversable (mapAccumL)
@@ -594,6 +594,93 @@ strokeV1From =
             String "eraser" -> Right False
             _ -> Left "expected a tool of \"pen\" or \"eraser\""
 
+-- Rigs ----------------------------------------------------------------------------------
+
+maxBones :: Int
+maxBones = 64
+
+-- | A bone at rest: its joint, length and direction; its parent comes before it.
+data Bone = Bone {boneId :: LayerId, parent :: Maybe LayerId, origin :: Vec, boneLength :: Extent, boneAngle :: Angle}
+    deriving stock (Eq, Show)
+
+-- | A skeleton for a drawing layer, and which item of its rest drawing each bone carries.
+data Rig = Rig [Bone] [(Int, LayerId)]
+    deriving stock (Eq, Show)
+
+-- | A drawing posed from the rig: the root moved, each bone turned.
+data Pose = Pose Vec [(LayerId, Angle)]
+    deriving stock (Eq, Show)
+
+boneFrom :: Value -> Either Text Bone
+boneFrom =
+    asObject >=> \o ->
+        Bone
+            <$> field "id" layerIdFrom o
+            <*> field "parent" (\case Null -> Right Nothing; v -> Just <$> layerIdFrom v) o
+            <*> field "origin" vecFrom o
+            <*> field "length" extentFrom o
+            <*> field "angle" angleFrom o
+
+bindingFrom :: Value -> Either Text (Int, LayerId)
+bindingFrom =
+    asObject >=> \o ->
+        (,)
+            <$> field "item" (asInteger >=> \n -> if n >= 0 && n < maxItemsPerFrame then Right n else Left ("expected an item from 0 to " <> tshow (maxItemsPerFrame - 1))) o
+            <*> field "bone" layerIdFrom o
+
+-- | Absent (or null) is no rig.
+rigFrom :: Value -> Either Text (Maybe Rig)
+rigFrom = \case
+    Null -> Right Nothing
+    v -> do
+        o <- asObject v
+        bones <- field "bones" (asArray >=> bounded "bones" 0 maxBones >=> indexed boneFrom) o
+        bindings <- field "bindings" (asArray >=> bounded "bindings" 0 maxItemsPerFrame >=> indexed bindingFrom) o
+        Just <$> checkedRig bones bindings
+
+-- | Parents before children, ids distinct, bindings to bones that exist: the editor's rules and words.
+checkedRig :: [Bone] -> [(Int, LayerId)] -> Either Text Rig
+checkedRig bones bindings = go [] (zip [0 :: Int ..] bones)
+    where
+        go seen = \case
+            [] -> do
+                case [i | (i, (_, b)) <- zip [0 :: Int ..] bindings, b `notElem` seen] of
+                    (i : _) -> Left ("bindings: " <> tshow i <> ": bone: expected a bone of this rig")
+                    [] -> Right (Rig bones bindings)
+            (i, b) : rest
+                | b.boneId `elem` seen -> Left ("bones: " <> tshow i <> ": id: expected every bone id to be different")
+                | Just pa <- b.parent, pa `notElem` seen -> Left ("bones: " <> tshow i <> ": parent: expected a bone defined before this one")
+                | otherwise -> go (b.boneId : seen) rest
+
+rigValue :: Rig -> Value
+rigValue (Rig bones bindings) =
+    object
+        [ "bones" .= [object ["id" .= lid b.boneId, "parent" .= maybe Null (String . lid) b.parent, "origin" .= vecValue b.origin, "length" .= let Extent e = b.boneLength in number e, "angle" .= let Angle a = b.boneAngle in number a] | b <- bones]
+        , "bindings" .= [object ["item" .= i, "bone" .= lid b] | (i, b) <- bindings]
+        ]
+    where
+        lid (LayerId t) = t
+
+-- | Absent (or null) is no pose.
+poseFrom :: Value -> Either Text (Maybe Pose)
+poseFrom = \case
+    Null -> Right Nothing
+    v -> do
+        o <- asObject v
+        root <- field "root" vecFrom o
+        angles <- field "angles" (asArray >=> bounded "angles" 0 maxBones >=> indexed pair) o
+        pure (Just (Pose root angles))
+    where
+        pair =
+            asArray >=> \case
+                [b, a] -> (,) <$> layerIdFrom b <*> angleFrom a
+                _ -> Left "expected an angle as [bone, radians]"
+
+poseValue :: Pose -> Value
+poseValue (Pose root angles) = object ["root" .= vecValue root, "angles" .= [toJSONList' [String t, let Angle x = a in number x] | (LayerId t, a) <- angles]]
+    where
+        toJSONList' = Array . Vector.fromList
+
 -- Cels ----------------------------------------------------------------------------------
 
 -- | How many timeline frames one drawing is exposed for: 1 (on ones) to 24.
@@ -614,8 +701,8 @@ markName = \case
     Breakdown -> "breakdown"
     Inbetween -> "inbetween"
 
--- | One drawing on a layer's timeline, held for its hold.
-data Cel = Cel Hold Mark [Item]
+-- | One drawing on a layer's timeline, held for its hold; posed ones carry their pose.
+data Cel = Cel Hold Mark [Item] (Maybe Pose)
     deriving stock (Eq, Show)
 
 itemsFrom :: Text -> (Value -> Either Text Item) -> Value -> Either Text [Item]
@@ -628,13 +715,14 @@ celV3From =
             <$> field "hold" holdFrom o
             <*> field "mark" (oneOf markName "expected a mark of \"none\", \"key\", \"breakdown\" or \"inbetween\"") o
             <*> field "items" (itemsFrom "items" parse) o
+            <*> field "pose" poseFrom o
 
 -- | A format 2 drawing, or (with @strokes@) a format 1 one.
 celOldFrom :: Text -> (Value -> Either Text Item) -> Value -> Either Text Cel
-celOldFrom key itemFrom = asObject >=> \o -> Cel <$> field "hold" holdFrom o <*> pure NoMark <*> field key (itemsFrom key itemFrom) o
+celOldFrom key itemFrom = asObject >=> \o -> Cel <$> field "hold" holdFrom o <*> pure NoMark <*> field key (itemsFrom key itemFrom) o <*> pure Nothing
 
 celValue :: Cel -> Value
-celValue (Cel (Hold n) m xs) = object ["hold" .= n, "mark" .= markName m, "items" .= map unparse xs]
+celValue (Cel (Hold n) m xs pose) = object (["hold" .= n, "mark" .= markName m, "items" .= map unparse xs] <> maybe [] (\p -> ["pose" .= poseValue p]) pose)
 
 -- | A layer's cels; formats 1 and 2 called them frames, and their messages still do.
 celsFrom :: Text -> (Value -> Either Text Cel) -> Value -> Either Text (NonEmpty Cel)
@@ -703,7 +791,7 @@ data LayerLook = LayerLook {layerId :: LayerId, label :: Label, visible :: Bool,
 
 data Layer
     = -- | Drawings on a timeline; holding the last one to the end makes a background.
-      DrawingLayer LayerLook Bool (NonEmpty Cel)
+      DrawingLayer LayerLook Bool (NonEmpty Cel) (Maybe Rig)
     | -- | An image or video to trace over; shown in the editor, never exported.
       ReferenceLayer LayerLook AssetId Media
     deriving stock (Eq, Show)
@@ -728,14 +816,14 @@ layerFrom =
                 <*> field "locked" boolFrom o
                 <*> field "opacity" opacityFrom o
         case kind of
-            KDrawing -> DrawingLayer look <$> field "holdLast" boolFrom o <*> field "cels" (celsFrom "cels" celV3From) o
+            KDrawing -> DrawingLayer look <$> field "holdLast" boolFrom o <*> field "cels" (celsFrom "cels" celV3From) o <*> field "rig" rigFrom o
             KReference -> ReferenceLayer look <$> field "asset" assetIdFrom o <*> field "media" (oneOf mediaName "expected media of \"image\" or \"video\"") o
 
 layerValue :: Layer -> Value
 layerValue l = object (look <> rest)
     where
         (kind, lk, rest) = case l of
-            DrawingLayer x holdLast cels -> ("drawing" :: Text, x, ["holdLast" .= holdLast, "cels" .= map celValue (NonEmpty.toList cels)])
+            DrawingLayer x holdLast cels rig -> ("drawing" :: Text, x, ["holdLast" .= holdLast, "cels" .= map celValue (NonEmpty.toList cels)] <> maybe [] (\r -> ["rig" .= rigValue r]) rig)
             ReferenceLayer x (AssetId a) m -> ("reference", x, ["asset" .= a, "media" .= mediaName m])
         LayerId lid = lk.layerId
         Label nm = lk.label
@@ -744,7 +832,7 @@ layerValue l = object (look <> rest)
 
 lookOf :: Layer -> LayerLook
 lookOf = \case
-    DrawingLayer x _ _ -> x
+    DrawingLayer x _ _ _ -> x
     ReferenceLayer x _ _ -> x
 
 -- Camera --------------------------------------------------------------------------------
@@ -851,7 +939,7 @@ isDrawingLayer = \case
 
 -- | Formats 1 and 2: one list of drawings, which becomes the first layer.
 firstLayer :: NonEmpty Cel -> Layer
-firstLayer = DrawingLayer (LayerLook (LayerId "layer-1") (Label "Layer 1") True False (Opacity 1)) False
+firstLayer cels = DrawingLayer (LayerLook (LayerId "layer-1") (Label "Layer 1") True False (Opacity 1)) False cels Nothing
 
 instance Parse Project where
     type Raw Project = Value
@@ -889,13 +977,13 @@ instance Parse Project where
 
 -- | The timeline's length: its longest drawing layer.
 duration :: Project -> Int
-duration p = maximum (1 :| [sum [n | Cel (Hold n) _ _ <- NonEmpty.toList cels] | DrawingLayer _ _ cels <- NonEmpty.toList p.layers])
+duration p = maximum (1 :| [sum [n | Cel (Hold n) _ _ _ <- NonEmpty.toList cels] | DrawingLayer _ _ cels _ <- NonEmpty.toList p.layers])
 
 -- Edits (for agents) -------------------------------------------------------------------
 
 -- | A new project with one drawing layer and one empty drawing.
 newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project
-newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark []))), camera = [], audio = []}
+newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = []}
 
 {- | The layer an agent means: by id, or (none given) the topmost drawing layer. Returned
 as its index, bottom first.
@@ -917,7 +1005,7 @@ layersSummary p =
         , let
             LayerLook (LayerId t) (Label nm) _ _ _ = lookOf l
             (kind, extra) = case l of
-                DrawingLayer _ holdLast cels -> ("drawing" :: Text, ["drawings" .= length cels, "holdLast" .= holdLast])
+                DrawingLayer _ holdLast cels rig -> ("drawing" :: Text, ["drawings" .= length cels, "holdLast" .= holdLast, "rigged" .= isJust rig])
                 ReferenceLayer {} -> ("reference", [])
         ]
     where
@@ -930,15 +1018,16 @@ onLayerCels li f p = do
     checked p {layers = layers'}
     where
         step (i, l) = case l of
-            DrawingLayer look holdLast cels | i == li -> do
+            DrawingLayer look holdLast cels rig | i == li -> do
                 cs <- f cels
                 when (length cs > maxFrames) $ Left ("expected at most " <> tshow maxFrames <> " drawings on a layer")
-                DrawingLayer look holdLast <$> nonEmpty "expected to keep at least one drawing on a layer" cs
+                ne <- nonEmpty "expected to keep at least one drawing on a layer" cs
+                pure (DrawingLayer look holdLast ne rig)
             _ -> Right l
 
 celsOf :: Int -> Project -> [Cel]
 celsOf li p = case drop li (NonEmpty.toList p.layers) of
-    (DrawingLayer _ _ cels : _) -> NonEmpty.toList cels
+    (DrawingLayer _ _ cels _ : _) -> NonEmpty.toList cels
     _ -> []
 
 -- | Drawing @n@ (from 1) of a layer, as wire JSON.
@@ -952,9 +1041,10 @@ onDrawing li n f p
     | n < 1 || n > length (celsOf li p) = Left ("expected a drawing from 1 to " <> tshow (length (celsOf li p)))
     | otherwise = onLayerCels li (traverse step . zip [1 ..] . NonEmpty.toList) p
     where
-        step (i, Cel h m xs)
-            | i == n = let ys = f xs in if length ys > maxItemsPerFrame then Left ("expected 0 to " <> tshow maxItemsPerFrame <> " items") else Right (Cel h m ys)
-            | otherwise = Right (Cel h m xs)
+        -- An agent's edit to a posed drawing makes it an ordinary drawing again.
+        step (i, Cel h m xs pose)
+            | i == n = let ys = f xs in if length ys > maxItemsPerFrame then Left ("expected 0 to " <> tshow maxItemsPerFrame <> " items") else Right (Cel h m ys Nothing)
+            | otherwise = Right (Cel h m xs pose)
 
 -- | Items on top of drawing @n@ of a layer.
 addItemsAt :: Int -> Int -> [Item] -> Project -> Either Text Project
@@ -976,8 +1066,8 @@ insertDrawing li after copy holdFor p
                 let
                     cs = NonEmpty.toList cels
                     source = case drop (after - 1) cs of
-                        (Cel _ m xs : _) | copy && after >= 1 -> Cel h m xs
-                        _ -> Cel h NoMark []
+                        (Cel _ m xs pose : _) | copy && after >= 1 -> Cel h m xs pose
+                        _ -> Cel h NoMark [] Nothing
                     (before, rest) = splitAt after cs
                 in
                     Right (before <> [source] <> rest)
@@ -1003,7 +1093,7 @@ addLayer raw background p = do
                     c = "layer-" <> tshow (n :: Int)
                 , c `notElem` ids
                 ]
-        layer = DrawingLayer (LayerLook (LayerId fresh) lbl True False (Opacity 1)) background (NonEmpty.singleton (Cel (Hold 1) NoMark []))
+        layer = DrawingLayer (LayerLook (LayerId fresh) lbl True False (Opacity 1)) background (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing)) Nothing
         ls = NonEmpty.toList p.layers
         (refs, others) = break isDrawingLayer ls
     layers' <- nonEmpty "expected a layer" (if background then refs <> [layer] <> others else ls <> [layer])

@@ -6,6 +6,7 @@ import v1UpgradedRaw from "../../../fixtures/project-v1-upgraded.json?raw";
 import v2Raw from "../../../fixtures/project-v2.json?raw";
 import v2UpgradedRaw from "../../../fixtures/project-v2-upgraded.json?raw";
 import v3Raw from "../../../fixtures/project-v3.json?raw";
+import v3RigRaw from "../../../fixtures/project-v3-rig.json?raw";
 import rejectionsRaw from "../../../fixtures/rejections.json?raw";
 import { parseColor, parseHeight, parseProject, parseProjectId, parseProjectName, parseWidth, unparseProject } from "./project";
 import { unwrap } from "./result";
@@ -117,6 +118,11 @@ describe("Project", () => {
 describe("shared fixtures", () => {
   it("a format 3 project with layers, a camera and audio round-trips", () => {
     const raw = fixture(v3Raw);
+    expect(unparseProject(unwrap(parseProject(raw)))).toEqual(raw);
+  });
+
+  it("a rigged layer with a posed drawing round-trips", () => {
+    const raw = fixture(v3RigRaw);
     expect(unparseProject(unwrap(parseProject(raw)))).toEqual(raw);
   });
 

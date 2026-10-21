@@ -2349,5 +2349,482 @@
    ]
   },
   "error": "layers: 0: media: expected media of \"image\" or \"video\""
+ },
+ {
+  "name": "rig bone whose parent comes later",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-rig",
+   "name": "Rigged arm",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "arm",
+     "name": "Arm",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#1c1c1e",
+         "size": 2,
+         "opacity": 1,
+         "fill": null,
+         "center": [
+          200,
+          0
+         ],
+         "width": 20,
+         "height": 20,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#1c1c1e",
+         "size": 2,
+         "opacity": 1,
+         "fill": null,
+         "center": [
+          100,
+          100
+         ],
+         "width": 20,
+         "height": 20,
+         "rotation": 0
+        }
+       ],
+       "pose": {
+        "root": [
+         0,
+         0
+        ],
+        "angles": [
+         [
+          "lower",
+          1.5707963267948966
+         ]
+        ]
+       }
+      }
+     ],
+     "rig": {
+      "bones": [
+       {
+        "id": "lower",
+        "parent": "upper",
+        "origin": [
+         100,
+         0
+        ],
+        "length": 100,
+        "angle": 0
+       },
+       {
+        "id": "upper",
+        "parent": null,
+        "origin": [
+         0,
+         0
+        ],
+        "length": 100,
+        "angle": 0
+       }
+      ],
+      "bindings": []
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 3: rig: bones: 0: parent: expected a bone defined before this one"
+ },
+ {
+  "name": "rig binding to a missing bone",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-rig",
+   "name": "Rigged arm",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "arm",
+     "name": "Arm",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#1c1c1e",
+         "size": 2,
+         "opacity": 1,
+         "fill": null,
+         "center": [
+          200,
+          0
+         ],
+         "width": 20,
+         "height": 20,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#1c1c1e",
+         "size": 2,
+         "opacity": 1,
+         "fill": null,
+         "center": [
+          100,
+          100
+         ],
+         "width": 20,
+         "height": 20,
+         "rotation": 0
+        }
+       ],
+       "pose": {
+        "root": [
+         0,
+         0
+        ],
+        "angles": [
+         [
+          "lower",
+          1.5707963267948966
+         ]
+        ]
+       }
+      }
+     ],
+     "rig": {
+      "bones": [
+       {
+        "id": "upper",
+        "parent": null,
+        "origin": [
+         0,
+         0
+        ],
+        "length": 100,
+        "angle": 0
+       },
+       {
+        "id": "lower",
+        "parent": "upper",
+        "origin": [
+         100,
+         0
+        ],
+        "length": 100,
+        "angle": 0
+       }
+      ],
+      "bindings": [
+       {
+        "item": 0,
+        "bone": "wing"
+       }
+      ]
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 3: rig: bindings: 0: bone: expected a bone of this rig"
  }
 ]

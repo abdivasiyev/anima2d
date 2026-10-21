@@ -24,10 +24,13 @@ spec = describe "shared fixtures" $ do
     v2 <- runIO (load "project-v2.json")
     v2Upgraded <- runIO (load "project-v2-upgraded.json")
     v3 <- runIO (load "project-v3.json")
+    v3rig <- runIO (load "project-v3-rig.json")
     rejections <- runIO (load "rejections.json")
 
     it "a format 3 project with layers, a camera and audio round-trips"
         $ (unparse <$> parse @Project v3) `shouldBe` Right v3
+    it "a rigged layer with a posed drawing round-trips"
+        $ (unparse <$> parse @Project v3rig) `shouldBe` Right v3rig
     it "a format 2 project with every kind of item upgrades to format 3"
         $ (unparse <$> parse @Project v2) `shouldBe` Right v2Upgraded
     it "a format 1 project upgrades to format 3"

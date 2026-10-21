@@ -420,6 +420,101 @@ export const unparseItem = (item: Item): unknown => {
   }
 };
 
+// Rigs ----------------------------------------------------------------------------------
+
+export const MAX_BONES = 64;
+
+/** A bone at rest: where its joint is, how long it is and which way it points. */
+export type Bone = Brand<
+  { readonly id: LayerId; readonly parent: LayerId | null; readonly origin: Vec; readonly length: Extent; readonly angle: Angle },
+  "Bone"
+>;
+
+/** Which item of the layer's rest drawing (its first) each bone carries. */
+export type Binding = Brand<{ readonly item: number; readonly bone: LayerId }, "Binding">;
+
+/** A skeleton for a drawing layer; its first drawing is the rest pose. */
+export type Rig = Brand<{ readonly bones: readonly Bone[]; readonly bindings: readonly Binding[] }, "Rig">;
+
+/** A drawing posed from the rest drawing: the whole rig moved by `root`, each bone turned by its angle. */
+export type Pose = Brand<{ readonly root: Vec; readonly angles: readonly (readonly [LayerId, Angle])[] }, "Pose">;
+
+/** Bones and bindings from values already parsed; parents come before their children. */
+export const makeRig = (bones: readonly Bone[], bindings: readonly Binding[]): Result<Rig> => {
+  if (bones.length > MAX_BONES) return err(`bones: expected 0 to ${MAX_BONES} bones`);
+  const seen = new Set<string>();
+  for (const [i, b] of bones.entries()) {
+    if (seen.has(b.id)) return err(`bones: ${i}: id: expected every bone id to be different`);
+    if (b.parent !== null && !seen.has(b.parent)) return err(`bones: ${i}: parent: expected a bone defined before this one`);
+    seen.add(b.id);
+  }
+  for (const [i, k] of bindings.entries()) if (!seen.has(k.bone)) return err(`bindings: ${i}: bone: expected a bone of this rig`);
+  return ok(brandChecked({ bones, bindings }));
+};
+
+export const makeBone = (id: LayerId, parent: LayerId | null, origin: Vec, length: Extent, angle: Angle): Bone => brandChecked({ id, parent, origin, length, angle });
+
+export const makeBinding = (item: number, bone: LayerId): Result<Binding> =>
+  Number.isInteger(item) && item >= 0 && item < MAX_ITEMS_PER_FRAME ? ok(brandChecked({ item, bone })) : err(`expected an item from 0 to ${MAX_ITEMS_PER_FRAME - 1}`);
+
+export const makePose = (root: Vec, angles: readonly (readonly [LayerId, Angle])[]): Pose => brandChecked({ root, angles });
+
+const parseBone = (raw: unknown): Result<Bone> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const id = yield* field(o, "id", parseLayerId);
+    const parent = yield* field(o, "parent", (v) => (v === null ? ok(null) : parseLayerId(v)));
+    const origin = yield* field(o, "origin", parseVec);
+    const length = yield* field(o, "length", parseExtent);
+    const angle = yield* field(o, "angle", parseAngle);
+    return ok(makeBone(id, parent, origin, length, angle));
+  });
+
+const parseBinding = (raw: unknown): Result<Binding> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const item = yield* field(o, "item", (v) => andThen(integer(v), (n) => (n >= 0 && n < MAX_ITEMS_PER_FRAME ? ok(n) : err(`expected an item from 0 to ${MAX_ITEMS_PER_FRAME - 1}`))));
+    const bone = yield* field(o, "bone", parseLayerId);
+    return makeBinding(item, bone);
+  });
+
+const parseRig = (raw: unknown): Result<Rig | null> =>
+  raw === undefined || raw === null
+    ? ok(null)
+    : parseWith(function* () {
+        const o = yield* bind(object(raw));
+        const bones = yield* field(o, "bones", (v) => andThen(andThen(array(v), (xs) => bounded("bones", 0, MAX_BONES, xs)), (xs) => each(xs, parseBone)));
+        const bindings = yield* field(o, "bindings", (v) => andThen(andThen(array(v), (xs) => bounded("bindings", 0, MAX_ITEMS_PER_FRAME, xs)), (xs) => each(xs, parseBinding)));
+        return makeRig(bones, bindings);
+      });
+
+const parsePose = (raw: unknown): Result<Pose | null> =>
+  raw === undefined || raw === null
+    ? ok(null)
+    : parseWith(function* () {
+        const o = yield* bind(object(raw));
+        const root = yield* field(o, "root", parseVec);
+        const angles = yield* field(o, "angles", (v) =>
+          andThen(andThen(array(v), (xs) => bounded("angles", 0, MAX_BONES, xs)), (xs) =>
+            each(xs, (pair) =>
+              andThen(array(pair), (ab) => {
+                const [rb, ra] = ab;
+                if (ab.length !== 2) return err("expected an angle as [bone, radians]");
+                return andThen(parseLayerId(rb), (b) => andThen(parseAngle(ra), (a): Result<readonly [LayerId, Angle]> => ok([b, a] as const)));
+              }),
+            ),
+          ),
+        );
+        return ok(makePose(root, angles));
+      });
+
+const unparseRig = (r: Rig): unknown => ({
+  bones: r.bones.map((b) => ({ id: b.id, parent: b.parent, origin: [b.origin[0], b.origin[1]], length: b.length, angle: b.angle })),
+  bindings: r.bindings.map((k) => ({ item: k.item, bone: k.bone })),
+});
+
+const unparsePose = (p: Pose): unknown => ({ root: [p.root[0], p.root[1]], angles: p.angles.map(([b, a]) => [b, a]) });
+
 // Cels ----------------------------------------------------------------------------------
 
 /** How many timeline frames one drawing is exposed for: 1 (on ones) to 24. */
@@ -434,10 +529,11 @@ export type Mark = (typeof MARKS)[number];
 export const parseMark = oneOf(MARKS, 'expected a mark of "none", "key", "breakdown" or "inbetween"');
 
 /** One drawing on a layer's timeline, held for `hold` frames. */
-export type Cel = Brand<{ readonly hold: Hold; readonly mark: Mark; readonly items: readonly Item[] }, "Cel">;
+export type Cel = Brand<{ readonly hold: Hold; readonly mark: Mark; readonly items: readonly Item[]; readonly pose: Pose | null }, "Cel">;
 
-export const makeCel = (hold: Hold, mark: Mark, items: readonly Item[]): Result<Cel> =>
-  items.length > MAX_ITEMS_PER_FRAME ? err(`expected 0 to ${MAX_ITEMS_PER_FRAME} items`) : ok(brandChecked({ hold, mark, items }));
+/** A cel; `pose` is set on a drawing posed from its layer's rig (its items are the baked result). */
+export const makeCel = (hold: Hold, mark: Mark, items: readonly Item[], pose: Pose | null = null): Result<Cel> =>
+  items.length > MAX_ITEMS_PER_FRAME ? err(`expected 0 to ${MAX_ITEMS_PER_FRAME} items`) : ok(brandChecked({ hold, mark, items, pose }));
 
 const parseItems = (key: string, parse: (raw: unknown) => Result<Item>) => (raw: unknown): Result<Item[]> =>
   andThen(andThen(array(raw), (xs) => bounded(key, 0, MAX_ITEMS_PER_FRAME, xs)), (xs) => each(xs, parse));
@@ -448,7 +544,8 @@ const parseCelV3 = (raw: unknown): Result<Cel> =>
     const hold = yield* field(o, "hold", parseHold);
     const mark = yield* field(o, "mark", parseMark);
     const items = yield* field(o, "items", parseItems("items", parseItem));
-    return makeCel(hold, mark, items);
+    const pose = yield* field(o, "pose", parsePose);
+    return makeCel(hold, mark, items, pose);
   });
 
 const parseCelV2 = (raw: unknown): Result<Cel> =>
@@ -528,6 +625,8 @@ export interface DrawingLayerFields {
   readonly opacity: Opacity;
   readonly holdLast: boolean;
   readonly cels: NonEmpty<Cel>;
+  /** A skeleton; the first drawing is its rest pose. On the wire only when there is one. */
+  readonly rig: Rig | null;
 }
 
 /** An image or video to trace over; shown in the editor, never exported. */
@@ -570,7 +669,8 @@ export const parseLayer = (raw: unknown): Result<Layer> =>
     if (kind === "drawing") {
       const holdLast = yield* field(o, "holdLast", parseBool);
       const cels = yield* field(o, "cels", parseCels(parseCelV3));
-      return makeLayer({ kind, id, name, visible, locked, opacity, holdLast, cels });
+      const rig = yield* field(o, "rig", parseRig);
+      return makeLayer({ kind, id, name, visible, locked, opacity, holdLast, cels, rig });
     }
     const asset = yield* field(o, "asset", parseAssetId);
     const media = yield* field(o, "media", parseMedia);
@@ -587,7 +687,8 @@ const unparseLayer = (l: Layer): unknown =>
         locked: l.locked,
         opacity: l.opacity,
         holdLast: l.holdLast,
-        cels: l.cels.map((c) => ({ hold: c.hold, mark: c.mark, items: c.items.map(unparseItem) })),
+        cels: l.cels.map((c) => ({ hold: c.hold, mark: c.mark, items: c.items.map(unparseItem), ...(c.pose === null ? {} : { pose: unparsePose(c.pose) }) })),
+        ...(l.rig === null ? {} : { rig: unparseRig(l.rig) }),
       }
     : { kind: l.kind, id: l.id, name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, asset: l.asset, media: l.media };
 
@@ -706,7 +807,7 @@ const firstLayer = (cels: NonEmpty<Cel>): Result<Layer> => {
   const name = parseLabel("Layer 1");
   if (!id.ok) return id;
   if (!name.ok) return name;
-  return makeLayer({ kind: "drawing", id: id.value, name: name.value, visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), holdLast: false, cels });
+  return makeLayer({ kind: "drawing", id: id.value, name: name.value, visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), holdLast: false, cels, rig: null });
 };
 
 export const parseProject = (raw: unknown): Result<Project> =>

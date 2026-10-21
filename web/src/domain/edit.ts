@@ -33,9 +33,11 @@ import {
   type Mark,
   type Media,
   type Opacity,
+  type Pose,
   type Project,
   type ProjectId,
   type ProjectName,
+  type Rig,
 } from "./project";
 
 export interface Where {
@@ -85,7 +87,7 @@ export const newProject = (id: ProjectId, name: ProjectName, canvas: Canvas, fps
   unwrap(
     andThen(parseLayerId("layer-1"), (lid) =>
       andThen(parseLabel("Layer 1"), (lname) =>
-        andThen(makeLayer({ kind: "drawing", id: lid, name: lname, visible: true, locked: false, opacity: FULL, holdLast: false, cels: [blankCel()] }), (layer) =>
+        andThen(makeLayer({ kind: "drawing", id: lid, name: lname, visible: true, locked: false, opacity: FULL, holdLast: false, cels: [blankCel()], rig: null }), (layer) =>
           makeProject(id, name, canvas, fps, [layer]),
         ),
       ),
@@ -109,9 +111,9 @@ export const clearCel = (p: Project, at: Where): Result<Project> => setItems(p, 
 
 // Cels ----------------------------------------------------------------------------------
 
-export const setHold = (p: Project, at: Where, hold: Hold): Result<Project> => withCel(p, at, (c) => makeCel(hold, c.mark, c.items));
+export const setHold = (p: Project, at: Where, hold: Hold): Result<Project> => withCel(p, at, (c) => makeCel(hold, c.mark, c.items, c.pose));
 
-export const setMark = (p: Project, at: Where, mark: Mark): Result<Project> => withCel(p, at, (c) => makeCel(c.hold, mark, c.items));
+export const setMark = (p: Project, at: Where, mark: Mark): Result<Project> => withCel(p, at, (c) => makeCel(c.hold, mark, c.items, c.pose));
 
 /** Insert a blank drawing after `at`. */
 export const insertBlank = (p: Project, at: Where): Result<Project> =>
@@ -137,6 +139,15 @@ export const move = (p: Project, at: Where, to: number): Result<Project> =>
       return ok([...rest.slice(0, k), c, ...rest.slice(k)]);
     }),
   );
+
+// Rigs ----------------------------------------------------------------------------------
+
+/** Give a drawing layer a skeleton, or take it away (null). */
+export const setRig = (p: Project, layer: number, rig: Rig | null): Result<Project> =>
+  andThen(drawingAt(p, layer), (l) => andThen(makeLayer({ ...l, rig }), (next) => rebuild(p, p.layers.map((x, j) => (j === layer ? next : x)))));
+
+/** A drawing posed from the rig: its baked items and the pose they came from. */
+export const setPosed = (p: Project, at: Where, items: readonly Item[], pose: Pose): Result<Project> => withCel(p, at, (c) => makeCel(c.hold, c.mark, items, pose));
 
 // Ranges (sequence tools) ---------------------------------------------------------------
 
@@ -187,7 +198,7 @@ export const removeRange = (p: Project, r: Range): Result<Project> =>
 /** A new drawing layer above layer `below`, one blank drawing on it. */
 export const addDrawingLayer = (p: Project, below: number, name: LabelName, holdLast = false): Result<Project> =>
   andThen(newId("layer"), (id) =>
-    andThen(makeLayer({ kind: "drawing", id, name, visible: true, locked: false, opacity: FULL, holdLast, cels: [blankCel()] }), (layer) =>
+    andThen(makeLayer({ kind: "drawing", id, name, visible: true, locked: false, opacity: FULL, holdLast, cels: [blankCel()], rig: null }), (layer) =>
       rebuild(p, [...p.layers.slice(0, below + 1), layer, ...p.layers.slice(below + 1)]),
     ),
   );

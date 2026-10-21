@@ -26,9 +26,12 @@ import {
   type Hold,
   type Item,
   type Point,
+  type Pose,
+  type Rig,
   type Vec,
 } from "../domain/project";
 import { about, compose, rotation, transformItem, translate, type XY } from "./geometry";
+import { bake, lerpPose } from "./rig";
 import { ease } from "./output";
 
 const lerp = (a: number, b: number, u: number): number => a + (b - a) * u;
@@ -181,6 +184,24 @@ export const alongPath = (base: Cel, selected: ReadonlySet<number>, path: readon
     const items = each([...base.items.entries()], ([i, it]) => (selected.has(i) ? transformItem(it, m) : ok(it)));
     if (!items.ok) return items;
     const cel = makeCel(hold.value, "inbetween", items.value);
+    if (!cel.ok) return cel;
+    out.push(cel.value);
+  }
+  return ok(out);
+};
+
+/**
+ * Inbetweens of two poses of a rig: the bones turn between them (and the root moves), and
+ * each drawing is baked from the rest drawing, so limbs swing in arcs instead of sliding.
+ */
+export const inbetweenPoses = (rig: Rig, rest: Cel, a: Pose, b: Pose, count: number, how: Ease, hold: Hold): Result<Cel[]> => {
+  const n = Math.max(1, Math.min(48, Math.floor(count)));
+  const out: Cel[] = [];
+  for (let k = 1; k <= n; k++) {
+    const pose = lerpPose(a, b, ease(how, k / (n + 1)));
+    const items = bake(rig, rest, pose);
+    if (!items.ok) return items;
+    const cel = makeCel(hold, "inbetween", items.value, pose);
     if (!cel.ok) return cel;
     out.push(cel.value);
   }

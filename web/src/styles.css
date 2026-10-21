@@ -1505,3 +1505,28 @@ dialog progress {
 a.btn {
   text-decoration: none;
 }
+
+/* Eight tools: keep the rail inside the workspace, scrolling if a short screen needs it. */
+.rail {
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.rail .icon-btn,
+.rail .swatch {
+  width: 36px;
+  height: 36px;
+}
+
+.rail .swatch {
+  padding: 7px;
+}
+
+.rail .vslider {
+  height: 92px;
+}
+
+.rail .rule {
+  margin: 4px 0;
+}

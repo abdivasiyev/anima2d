@@ -22,7 +22,7 @@ import {
   type ScatterKind,
 } from "./project";
 
-export const TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill", "eyedropper"] as const;
+export const TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill", "eyedropper", "rig"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 export const ERASERS = ["pixel", "object"] as const;
@@ -178,6 +178,7 @@ export const sizeKey = (s: Settings): "size" | "scatterSize" | "eraserSize" | "s
     case "select":
     case "fill":
     case "eyedropper":
+    case "rig":
       return "size";
   }
 };

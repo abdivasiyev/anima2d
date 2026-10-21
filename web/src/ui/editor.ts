@@ -32,6 +32,8 @@ import {
   setHold,
   setItems,
   setMark,
+  setPosed,
+  setRig,
   updateLayer,
   type Range,
   type Where,
@@ -48,11 +50,14 @@ import {
   duration,
   isDrawing,
   makeAudioTrack,
+  makeBone,
   makeCameraKey,
+  makeRig,
   normalizeAngle,
   parseAssetId,
   parseBrushSize,
   parseColor,
+  parseExtent,
   parseFps,
   parseFrameIndex,
   parseHold,
@@ -72,9 +77,12 @@ import {
   type ItemFields,
   type LabelName,
   type Layer,
+  type LayerId,
   type Mark,
   type Media,
+  type Pose,
   type Project,
+  type Rig,
 } from "../domain/project";
 import { andThen, err, ok, unwrap, type Result } from "../domain/result";
 import { decodeJson } from "../domain/wire";
@@ -111,7 +119,8 @@ import {
   type ToolController,
   type ToolHost,
 } from "../editor/tools";
-import { alongPath, inbetween } from "../editor/tween";
+import { alongPath, inbetween, inbetweenPoses } from "../editor/tween";
+import { bake, bindNearest, moveRoot, pointBone, posedBones, reachWith, restPose } from "../editor/rig";
 import { clampScale, cssTransform, fit, pinch, snapRotation, toCanvas, type View } from "../editor/view";
 import { ProjectSync, type Opened, type SyncState } from "../sync";
 import { AudioEngine } from "./audio";
@@ -139,7 +148,7 @@ const SHAPE_LABELS: Record<(typeof SHAPE_TOOLS)[number], string> = { line: "Line
 const ERASER_LABELS: Record<(typeof ERASERS)[number], string> = { pixel: "Pixel eraser", object: "Object eraser" };
 const GAP_LABELS: Record<(typeof GAPS)[number], string> = { 0: "No gap closing", 4: "Close small gaps", 10: "Close medium gaps", 20: "Close large gaps" };
 
-const TOOL_KEYS: Record<string, Tool> = { v: "select", b: "brush", g: "scatter", e: "eraser", u: "shape", k: "fill", i: "eyedropper" };
+const TOOL_KEYS: Record<string, Tool> = { v: "select", b: "brush", g: "scatter", e: "eraser", u: "shape", k: "fill", i: "eyedropper", r: "rig" };
 
 const loadSettings = (): Settings => {
   try {
@@ -269,6 +278,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     eraser: iconButton("eraser", "Eraser", "E"),
     shape: iconButton("line", "Shapes", "U"),
     fill: iconButton("fill", "Fill", "K"),
+    rig: iconButton("bone", "Rig: bones and poses", "R"),
   };
   const swatchDot = h("span", {});
   const swatch = h("button", { type: "button", class: "swatch", "aria-label": "Colour", title: "Colour" }, swatchDot);
@@ -286,6 +296,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     toolButtons.eraser,
     toolButtons.shape,
     toolButtons.fill,
+    toolButtons.rig,
     h("div", { class: "rule" }),
     swatch,
     h("div", { class: "rule" }),
@@ -655,6 +666,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       case "eraser":
       case "fill":
         return tool;
+      case "rig":
+        return "bone";
     }
   };
 
@@ -954,6 +967,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         return fillTool;
       case "eyedropper":
         return eyedropper;
+      case "rig":
+        return rigTool;
     }
   };
 
@@ -1044,11 +1059,41 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         return [choices("Fill", GAPS.map((g) => ({ value: g, label: GAP_LABELS[g] })), settings.gap, (v) => { updateSettings("gap", v); }), h("p", { class: "hint" }, "Fills go under the line art.")];
       case "select":
         return [h("p", { class: "hint" }, "Tap an item, or draw a loop around several. Drag to move, corners to scale, the round handle to rotate.")];
+      case "rig": {
+        const bindAll = h("button", { type: "button", class: "btn small" }, "Bind parts to their nearest bones");
+        const clear = h("button", { type: "button", class: "btn small" }, "Remove the rig");
+        bindAll.addEventListener("click", () => {
+          const l = drawing();
+          const rest = l?.cels[0];
+          if (l?.rig == null || rest === undefined) {
+            say("Draw bones on the first drawing first");
+            return;
+          }
+          const r = bindNearest(l.rig, rest);
+          if (!r.ok) say(r.error);
+          else if (edit(setRig(project(), layerIdx, r.value))) say(`${r.value.bindings.length} parts bound`);
+          closePopovers();
+        });
+        clear.addEventListener("click", () => {
+          edit(setRig(project(), layerIdx, null));
+          closePopovers();
+        });
+        return [
+          h("div", { class: "pop-heading" }, "Rig"),
+          h(
+            "p",
+            { class: "hint" },
+            "On the layer's first drawing (the rest pose), drag to add bones; start at a bone's tip to chain them. Then bind the parts. On any other drawing, drag a bone's tip to pose it, Shift to reach with the whole arm, or the first joint to move everything.",
+          ),
+          bindAll,
+          clear,
+        ];
+      }
     }
   };
 
   /** Tapping the tool you are already on opens its options. */
-  const RAIL_TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill"] as const;
+  const RAIL_TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill", "rig"] as const;
   for (const tool of RAIL_TOOLS) {
     const b = toolButtons[tool];
     b.addEventListener(
@@ -1414,7 +1459,13 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         say(hold.error);
         return;
       }
-      const made = inbetween(a, b, Number(count.value), ez, hold.value);
+      // Two poses of a rig (the rest drawing is the rest pose): turn the bones between them.
+      const rest = l.cels[0];
+      const poseA = celIdx === 0 ? restPose() : a.pose;
+      const made =
+        l.rig !== null && poseA !== null && b.pose !== null
+          ? inbetweenPoses(l.rig, rest, poseA, b.pose, Number(count.value), ez, hold.value)
+          : inbetween(a, b, Number(count.value), ez, hold.value);
       if (!made.ok) {
         say(`Could not inbetween: ${made.error}`);
         return;
@@ -1503,6 +1554,179 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       deactivate: () => {
         pts = [];
         pathCapture = undefined;
+        host.guides(null);
+      },
+    };
+  })();
+
+  // Rigging -----------------------------------------------------------------------------
+
+  let selectedBone: LayerId | undefined;
+
+  const drawBones = (rig: Rig, pose: Pose | null, extra?: readonly [XY, XY]): void => {
+    host.guides((ctx, px) => {
+      ctx.save();
+      for (const { bone, from, to } of posedBones(rig, pose)) {
+        const chosen = bone.id === selectedBone;
+        const dx = to[0] - from[0];
+        const dy = to[1] - from[1];
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = (-dy / len) * Math.min(10 * px, len * 0.18);
+        const ny = (dx / len) * Math.min(10 * px, len * 0.18);
+        ctx.fillStyle = chosen ? "rgba(47, 107, 255, 0.45)" : "rgba(47, 107, 255, 0.22)";
+        ctx.strokeStyle = "#2f6bff";
+        ctx.lineWidth = 1.5 * px;
+        ctx.beginPath();
+        ctx.moveTo(from[0], from[1]);
+        ctx.lineTo(from[0] + dx * 0.2 + nx, from[1] + dy * 0.2 + ny);
+        ctx.lineTo(to[0], to[1]);
+        ctx.lineTo(from[0] + dx * 0.2 - nx, from[1] + dy * 0.2 - ny);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        for (const [p, r] of [
+          [from, 5],
+          [to, 4],
+        ] as const) {
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], r * px, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+      if (extra !== undefined) {
+        ctx.strokeStyle = "#2f6bff";
+        ctx.setLineDash([6 * px, 4 * px]);
+        ctx.beginPath();
+        ctx.moveTo(extra[0][0], extra[0][1]);
+        ctx.lineTo(extra[1][0], extra[1][1]);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  };
+
+  const emptyRig = (): Rig => unwrap(makeRig([], []));
+
+  /** Bones on the rest drawing; poses on the others. */
+  const rigTool: ToolController = (() => {
+    let start: XY | undefined;
+    let parent: LayerId | null = null;
+    let grab: { kind: "tip"; bone: LayerId } | { kind: "root"; last: XY } | undefined;
+    let pose: Pose | undefined;
+    const near = (a: XY, b: XY): boolean => Math.hypot(a[0] - b[0], a[1] - b[1]) < 14 / view.scale;
+    const show = (): void => {
+      const l = drawing();
+      if (l === undefined) return;
+      drawBones(l.rig ?? emptyRig(), celIdx === 0 ? null : (pose ?? currentCel()?.pose ?? null));
+    };
+    const previewPose = (rig: Rig, p: Pose): void => {
+      const rest = drawing()?.cels[0];
+      if (rest === undefined) return;
+      const baked = bake(rig, rest, p);
+      if (baked.ok) host.preview(baked.value, new Set((currentCel()?.items ?? []).map((_, i) => i)));
+      drawBones(rig, p);
+    };
+    return {
+      down: (sm) => {
+        const l = drawing();
+        if (l === undefined) return;
+        const rig = l.rig ?? emptyRig();
+        const p: XY = [sm.x, sm.y];
+        if (celIdx === 0) {
+          // Rest drawing: tap a bone to choose it, or drag out a new one.
+          const hit = posedBones(rig, null).find((b) => near(b.to, p) || near(b.from, p));
+          const fromTip = posedBones(rig, null).find((b) => near(b.to, p));
+          if (hit !== undefined) selectedBone = hit.bone.id;
+          parent = fromTip?.bone.id ?? null;
+          start = fromTip !== undefined ? fromTip.to : p;
+          show();
+          return;
+        }
+        if (rig.bones.length === 0) {
+          say("Add bones on this layer's first drawing");
+          return;
+        }
+        pose = currentCel()?.pose ?? restPose();
+        const posed = posedBones(rig, pose);
+        const tip = posed.find((b) => near(b.to, p));
+        const first = posed[0];
+        if (tip !== undefined) {
+          grab = { kind: "tip", bone: tip.bone.id };
+          selectedBone = tip.bone.id;
+        } else if (first !== undefined && near(first.from, p)) grab = { kind: "root", last: p };
+        else grab = undefined;
+        show();
+      },
+      move: (sm) => {
+        const l = drawing();
+        if (l === undefined) return;
+        const rig = l.rig ?? emptyRig();
+        const p: XY = [sm.x, sm.y];
+        if (celIdx === 0) {
+          if (start !== undefined) drawBones(rig, null, [start, p]);
+          return;
+        }
+        if (grab === undefined || pose === undefined) return;
+        if (grab.kind === "tip") pose = shiftHeld ? reachWith(rig, pose, grab.bone, p) : pointBone(rig, pose, grab.bone, p);
+        else {
+          pose = moveRoot(pose, p[0] - grab.last[0], p[1] - grab.last[1]);
+          grab = { kind: "root", last: p };
+        }
+        previewPose(rig, pose);
+      },
+      up: (sm) => {
+        const l = drawing();
+        if (l === undefined) return;
+        const rig = l.rig ?? emptyRig();
+        const p: XY = [sm.x, sm.y];
+        if (celIdx === 0) {
+          const a = start;
+          start = undefined;
+          if (a === undefined || Math.hypot(p[0] - a[0], p[1] - a[1]) < 10 / view.scale) {
+            show();
+            return;
+          }
+          const id = parseLayerId(`bone-${rig.bones.length + 1}-${crypto.randomUUID().slice(0, 4)}`);
+          const origin = parseVec(a);
+          const length = parseExtent(Math.hypot(p[0] - a[0], p[1] - a[1]));
+          if (!id.ok || !origin.ok || !length.ok) return;
+          const bone = makeBone(id.value, parent, origin.value, length.value, normalizeAngle(Math.atan2(p[1] - a[1], p[0] - a[0])));
+          const next = makeRig([...rig.bones, bone], rig.bindings);
+          if (!next.ok) {
+            say(next.error);
+            return;
+          }
+          selectedBone = bone.id;
+          if (edit(setRig(project(), layerIdx, next.value))) say(rig.bones.length === 0 ? "First bone. Draw more, then bind the parts (Rig options)" : "Bone added");
+          show();
+          return;
+        }
+        const posed = pose;
+        const grabbed = grab;
+        grab = undefined;
+        pose = undefined;
+        const rest = l.cels[0];
+        if (posed === undefined || grabbed === undefined) return;
+        const baked = bake(rig, rest, posed);
+        host.preview([]);
+        if (!baked.ok) say(baked.error);
+        else edit(setPosed(project(), where(), baked.value, posed));
+        show();
+      },
+      cancel: () => {
+        start = undefined;
+        grab = undefined;
+        pose = undefined;
+        host.preview([]);
+        show();
+      },
+      deactivate: () => {
+        start = undefined;
+        grab = undefined;
+        pose = undefined;
+        host.preview([]);
         host.guides(null);
       },
     };
