@@ -1,0 +1,17 @@
+name: Ci
+
+on:
+    pull_request:
+    push:
+        branches-ignore: [main]
+
+jobs:
+    check:
+        runs-on: native
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Check flake
+              run: nix flake check -L --show-trace

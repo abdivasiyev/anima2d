@@ -1,0 +1,9 @@
+- arguments: [-XOverloadedRecordDot, -XOverloadedStrings, -XLambdaCase, -XDerivingVia, -XGHC2024]
+
+# Partial functions undo what parsing proved; reach for NonEmpty or a total pattern.
+- functions:
+    - {name: Data.List.NonEmpty.fromList, within: []}
+    - {name: head, within: []}
+    - {name: fromJust, within: []}
+    - {name: error, within: [Anima.Gen]}
+    - {name: undefined, within: []}

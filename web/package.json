@@ -1,0 +1,25 @@
+{
+  "name": "anima2d-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "eslint . && vitest run",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "lucide": "^0.544.0",
+    "perfect-freehand": "^1.2.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "eslint": "^9.35.0",
+    "fast-check": "^4.3.0",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.43.0",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,58 @@
+/**
+ * anima2D's entry point: a two-screen app routed by the URL hash.
+ *
+ *   #/          the project list
+ *   #/p/<id>    the editor for one project
+ */
+import "./styles.css";
+
+import { loadProject } from "./api";
+import { parseProjectId } from "./domain/project";
+import { h } from "./ui/dom";
+import { editorScreen } from "./ui/editor";
+import { homeScreen } from "./ui/home";
+import { disableSystemMenu } from "./ui/menu";
+
+const app = document.getElementById("app");
+if (app === null) throw new Error("index.html has no #app");
+
+disableSystemMenu();
+
+let current: AbortController | undefined;
+
+const go = (hash: string): void => {
+  if (location.hash === hash) void route();
+  else location.hash = hash;
+};
+
+const route = async (): Promise<void> => {
+  current?.abort();
+  const controller = new AbortController();
+  current = controller;
+  const match = /^#\/p\/(.+)$/.exec(location.hash);
+  if (match?.[1] === undefined) {
+    document.title = "anima2D";
+    app.replaceChildren(homeScreen(go));
+    return;
+  }
+  const id = parseProjectId(decodeURIComponent(match[1]));
+  if (!id.ok) {
+    go("#/");
+    return;
+  }
+  const loaded = await loadProject(id.value);
+  if (controller.signal.aborted) return;
+  if (!loaded.ok) {
+    const back = h("button", { type: "button", class: "btn" }, "Back to projects");
+    back.addEventListener("click", () => {
+      go("#/");
+    });
+    app.replaceChildren(h("div", { class: "home" }, h("header", { class: "home-header" }), h("div", { class: "empty" }, h("strong", {}, "This project could not be opened"), h("span", {}, loaded.error), back)));
+    return;
+  }
+  document.title = `${loaded.value.name} · anima2D`;
+  app.replaceChildren(editorScreen(loaded.value, go, controller.signal));
+};
+
+window.addEventListener("hashchange", () => void route());
+void route();

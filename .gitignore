@@ -1,0 +1,9 @@
+dist-newstyle/
+result
+result-*
+.direnv/
+.envrc
+.pre-commit-config.yaml
+node_modules/
+web/dist/
+data/

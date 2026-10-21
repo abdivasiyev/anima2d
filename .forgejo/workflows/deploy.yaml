@@ -1,0 +1,44 @@
+name: Deploy
+
+# A push to main is checked, built and deployed in one job: the runner sits in the
+# server VM, so the build lands in the same store the service runs from. The deploy
+# socket (server the host configuration) switches the profile and rolls back by
+# itself if /healthz does not answer.
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            action:
+                description: deploy the current main, or roll back to the previous build
+                type: choice
+                options: [deploy, rollback]
+                default: deploy
+
+concurrency:
+    group: deploy
+    cancel-in-progress: false
+
+jobs:
+    deploy:
+        runs-on: native
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Check flake
+              if: ${{ inputs.action != 'rollback' }}
+              run: nix flake check -L --show-trace
+
+            - name: Build
+              if: ${{ inputs.action != 'rollback' }}
+              run: echo "OUT=$(nix build .#default --no-link --print-out-paths)" >> "$GITHUB_ENV"
+
+            - name: Deploy
+              if: ${{ inputs.action != 'rollback' }}
+              run: anima2d-deploy deploy "$OUT"
+
+            - name: Roll back
+              if: ${{ inputs.action == 'rollback' }}
+              run: anima2d-deploy rollback
