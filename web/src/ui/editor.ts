@@ -5,7 +5,7 @@
  * into `PenSample`s and goes to the current tool; a touch can never become one, so
  * fingers and a resting palm only ever pan, zoom, rotate, or tap for undo and redo.
  */
-import { saveProject } from "../api";
+import { ProjectSync, type Opened, type SyncState } from "../sync";
 import { clearFrame, duplicate, insertBlank, remove, rename, setFps, setHold } from "../domain/edit";
 import { parsePenSample, type PenSample } from "../domain/pen";
 import {
@@ -63,8 +63,6 @@ import { icon, iconButton, setIcon, type IconName } from "./icons";
 import { closeMenu, openMenu, type MenuItem } from "./menu";
 
 const SETTINGS_KEY = "anima2d.settings";
-const SAVE_DELAY_MS = 1200;
-const RETRY_DELAY_MS = 5000;
 const TAP_MS = 280;
 const TAP_SLOP_PX = 12;
 const LONG_PRESS_MS = 500;
@@ -134,16 +132,16 @@ interface Touch {
   readonly y0: number;
 }
 
-type SaveState = "saved" | "pending" | "saving" | "failed";
-
-const SAVE_LABELS: Record<SaveState, string> = {
+const SAVE_LABELS: Record<SyncState, string> = {
   saved: "Saved",
+  device: "Saved on this device",
   pending: "Edited",
   saving: "Saving…",
   failed: "Not saved — retrying",
 };
 
-export const editorScreen = (initial: Project, go: (hash: string) => void, signal: AbortSignal): HTMLElement => {
+export const editorScreen = (opened: Opened, go: (hash: string) => void, signal: AbortSignal): HTMLElement => {
+  const initial = opened.project;
   const history = new History<Project>(initial);
   let settings = loadSettings();
   let index = 0;
@@ -512,42 +510,19 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
 
   // Saving ------------------------------------------------------------------------------
 
-  let saveTimer = 0;
-  let saving: Promise<void> | undefined;
-  let dirty = false;
-
-  const setSaveState = (s: SaveState): void => {
-    saveState.dataset.state = s;
-    saveState.textContent = SAVE_LABELS[s];
+  const setSaveState = (st: SyncState): void => {
+    saveState.dataset.state = st;
+    saveState.textContent = SAVE_LABELS[st];
   };
 
-  const flush = async (): Promise<void> => {
-    window.clearTimeout(saveTimer);
-    if (saving !== undefined) await saving;
-    if (!dirty) return;
-    dirty = false;
-    setSaveState("saving");
-    const snapshot = project();
-    saving = saveProject(snapshot).then((r) => {
-      saving = undefined;
-      if (r.ok) {
-        setSaveState(dirty ? "pending" : "saved");
-        if (dirty) scheduleSave();
-      } else {
-        dirty = true;
-        setSaveState("failed");
-        saveTimer = window.setTimeout(() => void flush(), RETRY_DELAY_MS);
-      }
-    });
-    await saving;
-  };
-
+  // The device copy and the server; `applyRemote` is defined below with the other edits.
+  const sync = new ProjectSync(opened, setSaveState, (p, note) => {
+    applyRemote(p, note);
+  });
   const scheduleSave = (): void => {
-    dirty = true;
-    setSaveState("pending");
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => void flush(), SAVE_DELAY_MS);
+    sync.edit(project());
   };
+  const flush = (): Promise<void> => sync.flush();
 
   // Editing -----------------------------------------------------------------------------
 
@@ -565,6 +540,16 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     renderAll();
     scheduleSave();
     return true;
+  };
+
+  /** A newer version from elsewhere: shown as an edit, so undo can still step back past it. */
+  const applyRemote = (p: Project, note: string): void => {
+    current().cancel();
+    selectTool.reset();
+    history.commit(p);
+    index = Math.min(index, p.frames.length - 1);
+    renderAll();
+    say(note);
   };
 
   const select = (i: number): void => {
@@ -1315,13 +1300,13 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     shiftHeld = false;
   }, opts);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush(); }, opts);
-  window.addEventListener("beforeunload", (e) => { if (dirty || saving !== undefined) e.preventDefault(); }, opts);
+  window.addEventListener("beforeunload", (e) => { if (sync.hasUnsaved) e.preventDefault(); }, opts);
   signal.addEventListener("abort", () => {
     closeMenu();
     cancelLongPress();
     current().deactivate();
     stop();
-    void flush();
+    void flush().then(() => { sync.stop(); });
   });
 
   // Start -------------------------------------------------------------------------------
@@ -1329,6 +1314,7 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   requestAnimationFrame(() => {
     fitView();
     renderAll();
+    if (opened.note !== undefined) say(opened.note);
   });
   return root;
 };

@@ -6,7 +6,7 @@
  */
 import "./styles.css";
 
-import { loadProject } from "./api";
+import { openProject } from "./sync";
 import { parseProjectId } from "./domain/project";
 import { h } from "./ui/dom";
 import { editorScreen } from "./ui/editor";
@@ -17,6 +17,13 @@ const app = document.getElementById("app");
 if (app === null) throw new Error("index.html has no #app");
 
 disableSystemMenu();
+
+// The app shell is cached by a service worker, so it opens with the server out of reach.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
 
 let current: AbortController | undefined;
 
@@ -40,7 +47,7 @@ const route = async (): Promise<void> => {
     go("#/");
     return;
   }
-  const loaded = await loadProject(id.value);
+  const loaded = await openProject(id.value);
   if (controller.signal.aborted) return;
   if (!loaded.ok) {
     const back = h("button", { type: "button", class: "btn" }, "Back to projects");
@@ -50,7 +57,7 @@ const route = async (): Promise<void> => {
     app.replaceChildren(h("div", { class: "home" }, h("header", { class: "home-header" }), h("div", { class: "empty" }, h("strong", {}, "This project could not be opened"), h("span", {}, loaded.error), back)));
     return;
   }
-  document.title = `${loaded.value.name} · anima2D`;
+  document.title = `${loaded.value.project.name} · anima2D`;
   app.replaceChildren(editorScreen(loaded.value, go, controller.signal));
 };
 

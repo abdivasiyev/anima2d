@@ -1,52 +1,84 @@
 /**
  * The projects API. Every response is decoded to `unknown` and parsed; a reply the editor
  * cannot parse is an error value, never a half-trusted object.
+ *
+ * "Offline" is its own outcome, distinct from a refusal: the server being out of reach is
+ * normal here (a home server loses power), and the editor carries on from the device copy.
  */
-import { err, ok, type Result } from "./domain/result";
+import { andThen, err, ok, type Result } from "./domain/result";
 import {
   parseProject,
   parseProjectSummary,
+  parseRevision,
   parseSummaries,
   unparseProject,
   type Project,
   type ProjectId,
   type ProjectSummary,
+  type Revision,
 } from "./domain/project";
+import { object } from "./domain/wire";
 
-const request = async (path: string, init?: RequestInit): Promise<Result<unknown>> => {
+export type Reply<T> = { readonly kind: "ok"; readonly value: T } | { readonly kind: "offline" } | { readonly kind: "conflict"; readonly revision: Revision } | { readonly kind: "error"; readonly error: string };
+
+const TIMEOUT_MS = 8000;
+
+/** What the server sent: its status, a header, and the body decoded to `unknown`. */
+interface Raw {
+  readonly status: number;
+  readonly revision: string | null;
+  readonly body: unknown;
+}
+
+const request = async (path: string, init?: RequestInit): Promise<Reply<Raw>> => {
   let res: Response;
   try {
-    res = await fetch(path, { credentials: "same-origin", ...init });
+    res = await fetch(path, { credentials: "same-origin", signal: AbortSignal.timeout(TIMEOUT_MS), ...init });
   } catch {
-    return err("the server could not be reached");
+    return { kind: "offline" };
   }
+  // a proxy answers for a server it cannot reach (502, 503, 504, 52x, 530).
+  if (res.status >= 502 && res.status !== 501) return { kind: "offline" };
   // The sign-in gate answers an expired session with a redirect to the sign-in provider.
-  if (res.redirected || res.status === 401) return err("your session has expired; reload to sign in again");
-  if (!res.ok) return err(res.status === 404 ? "no such project" : `the server answered ${res.status}`);
+  if (res.redirected || res.status === 401) return { kind: "error", error: "your session has expired; reload to sign in again" };
+  let body: unknown = null;
   try {
-    const body: unknown = await res.json();
-    return ok(body);
+    body = await res.json();
   } catch {
-    return err("the server's reply was not JSON");
+    body = null;
   }
+  if (res.status === 409) {
+    const now = andThen(object(body), (o) => parseRevision(o.revision));
+    return now.ok ? { kind: "conflict", revision: now.value } : { kind: "error", error: "the server reported a conflict it did not explain" };
+  }
+  if (!res.ok) return { kind: "error", error: res.status === 404 ? "no such project" : `the server answered ${res.status}` };
+  return { kind: "ok", value: { status: res.status, revision: res.headers.get("X-Revision"), body } };
 };
 
-const parsed = async <T>(r: Promise<Result<unknown>>, parse: (raw: unknown) => Result<T>): Promise<Result<T>> => {
-  const raw = await r;
-  return raw.ok ? parse(raw.value) : raw;
+const parsed = <T>(r: Reply<Raw>, parse: (raw: Raw) => Result<T>): Reply<T> => {
+  if (r.kind !== "ok") return r;
+  const v = parse(r.value);
+  return v.ok ? { kind: "ok", value: v.value } : { kind: "error", error: v.error };
 };
 
-export const listProjects = (): Promise<Result<ProjectSummary[]>> => parsed(request("/api/projects"), parseSummaries);
+export const listProjects = async (): Promise<Reply<ProjectSummary[]>> => parsed(await request("/api/projects"), (r) => parseSummaries(r.body));
 
-export const loadProject = (id: ProjectId): Promise<Result<Project>> =>
-  parsed(request(`/api/projects/${encodeURIComponent(id)}`), parseProject);
-
-export const saveProject = (p: Project): Promise<Result<ProjectSummary>> =>
-  parsed(
-    request(`/api/projects/${encodeURIComponent(p.id)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(unparseProject(p)),
-    }),
-    parseProjectSummary,
+export const loadProject = async (id: ProjectId): Promise<Reply<{ project: Project; revision: Revision }>> =>
+  parsed(await request(`/api/projects/${encodeURIComponent(id)}`), (r) =>
+    andThen(parseProject(r.body), (project) =>
+      andThen(r.revision === null ? err("the server sent no revision") : parseRevision(Number(r.revision)), (revision) => ok({ project, revision })),
+    ),
   );
+
+export const loadSummary = async (id: ProjectId): Promise<Reply<ProjectSummary>> =>
+  parsed(await request(`/api/projects/${encodeURIComponent(id)}/summary`), (r) => parseProjectSummary(r.body));
+
+/** Save, if the server is still at `base`; base 0 saves a project the server has not seen. */
+export const saveProject = async (p: Project, base: Revision): Promise<Reply<ProjectSummary>> => {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (base > 0) headers["X-Base-Revision"] = String(base);
+  return parsed(
+    await request(`/api/projects/${encodeURIComponent(p.id)}`, { method: "PUT", headers, body: JSON.stringify(unparseProject(p)) }),
+    (r) => parseProjectSummary(r.body),
+  );
+};

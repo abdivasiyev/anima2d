@@ -35,10 +35,14 @@ module Anima.Types.Project
       -- * Project
     , Project
     , projectId
+    , Revision
+    , firstRevision
+    , nextRevision
     , ProjectSummary
     , summarize
     , summaryId
     , summaryName
+    , summaryRevision
     , RawCanvas (..)
     , RawSummary (..)
 
@@ -637,6 +641,28 @@ instance Parse Project where
             , "frames" .= map frameValue (NonEmpty.toList p.frames)
             ]
 
+-- Revisions -----------------------------------------------------------------------------
+
+{- | How many times a project has been saved. A save names the revision it started from,
+and the store refuses it if another save got there first, so the editor on two devices
+and an agent over MCP never silently overwrite each other.
+-}
+newtype Revision = Revision Int
+    deriving stock (Eq, Ord, Show)
+    deriving (FromJSON, ToJSON) via Parsed Revision
+    deriving (FromHttpApiData, ToHttpApiData) via Parsed Revision
+
+instance Parse Revision where
+    type Raw Revision = Int
+    parse n = if n >= 0 then Right (Revision n) else Left "expected a revision of 0 or more"
+    unparse (Revision n) = n
+
+firstRevision :: Revision
+firstRevision = Revision 1
+
+nextRevision :: Revision -> Revision
+nextRevision (Revision n) = Revision (n + 1)
+
 -- Summaries -----------------------------------------------------------------------------
 
 {- | What the project list shows, kept beside each project so listing never reads the
@@ -648,12 +674,13 @@ data ProjectSummary = ProjectSummary
     , canvas :: Canvas
     , fps :: Fps
     , frameCount :: Int
+    , revision :: Revision
     }
     deriving stock (Eq, Show)
     deriving (FromJSON, ToJSON) via Parsed ProjectSummary
 
-summarize :: Project -> ProjectSummary
-summarize p = ProjectSummary {id = p.id, name = p.name, canvas = p.canvas, fps = p.fps, frameCount = length p.frames}
+summarize :: Revision -> Project -> ProjectSummary
+summarize r p = ProjectSummary {id = p.id, name = p.name, canvas = p.canvas, fps = p.fps, frameCount = length p.frames, revision = r}
 
 summaryId :: ProjectSummary -> ProjectId
 summaryId s = s.id
@@ -661,12 +688,17 @@ summaryId s = s.id
 summaryName :: ProjectSummary -> ProjectName
 summaryName s = s.name
 
+summaryRevision :: ProjectSummary -> Revision
+summaryRevision s = s.revision
+
 data RawSummary = RawSummary
     { id :: Text
     , name :: Text
     , canvas :: RawCanvas
     , fps :: Int
     , frameCount :: Int
+    , revision :: Maybe Int
+    -- ^ Missing in summaries written before revisions existed: those read as 0.
     }
     deriving stock (Eq, Generic, Show)
     deriving anyclass (FromJSON, ToJSON)
@@ -680,9 +712,17 @@ instance Parse ProjectSummary where
         f <- at "fps" (fpsFrom (Number (fromIntegral raw.fps)))
         unless (raw.frameCount >= 1 && raw.frameCount <= maxFrames)
             $ Left ("frameCount: expected a frame count from 1 to " <> tshow maxFrames)
-        pure ProjectSummary {id = pid, name = pname, canvas = c, fps = f, frameCount = raw.frameCount}
+        r <- at "revision" (parse (fromMaybe 0 raw.revision))
+        pure ProjectSummary {id = pid, name = pname, canvas = c, fps = f, frameCount = raw.frameCount, revision = r}
     unparse s =
         let
             Canvas (Width w) (Height h) = s.canvas
         in
-            RawSummary {id = unparse s.id, name = unparse s.name, canvas = RawCanvas {width = w, height = h}, fps = fpsValue s.fps, frameCount = s.frameCount}
+            RawSummary
+                { id = unparse s.id
+                , name = unparse s.name
+                , canvas = RawCanvas {width = w, height = h}
+                , fps = fpsValue s.fps
+                , frameCount = s.frameCount
+                , revision = Just (unparse s.revision)
+                }

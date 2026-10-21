@@ -1105,3 +1105,8 @@ dialog::backdrop {
     padding-left: max(64px, env(safe-area-inset-left));
   }
 }
+
+.notice.offline {
+  margin-bottom: 12px;
+  color: var(--text-2);
+}

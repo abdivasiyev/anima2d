@@ -11,7 +11,7 @@ import Data.Text qualified as Text
 import Anima.Gen (genProject)
 import Anima.Store (ProjectStore (..), StoreError (..), fileStore)
 import Anima.Types.Parse (Parse (..))
-import Anima.Types.Project (projectId, summarize)
+import Anima.Types.Project (firstRevision, nextRevision, projectId, summarize, summaryRevision)
 
 spec :: Spec
 spec = describe "fileStore" $ do
@@ -20,12 +20,12 @@ spec = describe "fileStore" $ do
         $ \dir -> do
             store <- fileStore dir
             project <- generate genProject
-            saved <- store.save project
-            saved `shouldBe` Right (summarize project)
+            saved <- store.save Nothing project
+            saved `shouldBe` Right (summarize firstRevision project)
             loaded <- store.load (projectId project)
-            loaded `shouldBe` Right project
+            fmap fst loaded `shouldBe` Right project
             listed <- store.list
-            listed `shouldBe` Right [summarize project]
+            listed `shouldBe` Right [summarize firstRevision project]
 
     it "answers NotFound for an id it never saw"
         $ withSystemTempDirectory "anima2d"
@@ -40,9 +40,22 @@ spec = describe "fileStore" $ do
         $ \dir -> do
             store <- fileStore dir
             project <- generate genProject
-            _ <- store.save project
+            _ <- store.save Nothing project
             LBS.writeFile (dir </> Text.unpack (unparse (projectId project)) <> ".json") "{\"format\": 2}"
             result <- store.load (projectId project)
             result `shouldSatisfy` \case
                 Left (Corrupt _) -> True
                 _ -> False
+
+    it "refuses a save based on a revision someone else already replaced"
+        $ withSystemTempDirectory "anima2d"
+        $ \dir -> do
+            store <- fileStore dir
+            project <- generate genProject
+            _ <- store.save Nothing project
+            first <- store.save (Just firstRevision) project
+            fmap summaryRevision' first `shouldBe` Right (nextRevision firstRevision)
+            stale <- store.save (Just firstRevision) project
+            stale `shouldBe` Left (Conflict (nextRevision firstRevision))
+    where
+        summaryRevision' = summaryRevision

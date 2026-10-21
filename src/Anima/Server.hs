@@ -3,6 +3,10 @@
 Sign-in is not here. the host's single sign-on gate (a reverse proxy asking an OAuth2 proxy)
 stands in front of every request, so anything that reaches this server has already
 signed in.
+
+Saves are revisioned. A project is loaded with its revision (@X-Revision@); a save names
+the revision it started from (@X-Base-Revision@) and is refused with 409 if another save
+landed first, so two devices, or the editor and an agent, never overwrite each other.
 -}
 module Anima.Server
     ( Api
@@ -18,6 +22,8 @@ import Servant
     ( Capture
     , Get
     , Handler
+    , Header
+    , Headers
     , JSON
     , PlainText
     , Put
@@ -25,8 +31,10 @@ import Servant
     , ReqBody
     , Server
     , ServerError (..)
+    , addHeader
     , err400
     , err404
+    , err409
     , err500
     , err503
     , serve
@@ -39,17 +47,25 @@ import System.IO (hPutStrLn, stderr)
 import WaiAppStatic.Storage.Filesystem (defaultWebAppSettings)
 import WaiAppStatic.Types (MaxAge (..), StaticSettings (..), toPiece)
 
+import Data.Aeson qualified as Aeson
 import Data.Text qualified as Text
 import Network.Wai qualified as Wai
 
 import Anima.Store (ProjectStore (..), StoreError (..))
-import Anima.Types.Project (Project, ProjectId, ProjectSummary, projectId)
+import Anima.Types.Parse (Parse (unparse))
+import Anima.Types.Project (Project, ProjectId, ProjectSummary, Revision, projectId, summaryRevision)
 
 type Api =
     "healthz" :> Get '[PlainText] Text
         :<|> "api" :> "projects" :> Get '[JSON] [ProjectSummary]
-        :<|> "api" :> "projects" :> Capture "id" ProjectId :> Get '[JSON] Project
-        :<|> "api" :> "projects" :> Capture "id" ProjectId :> ReqBody '[JSON] Project :> Put '[JSON] ProjectSummary
+        :<|> "api" :> "projects" :> Capture "id" ProjectId :> Get '[JSON] (Headers '[Header "X-Revision" Revision] Project)
+        :<|> "api" :> "projects" :> Capture "id" ProjectId :> "summary" :> Get '[JSON] ProjectSummary
+        :<|> "api"
+            :> "projects"
+            :> Capture "id" ProjectId
+            :> Header "X-Base-Revision" Revision
+            :> ReqBody '[JSON] Project
+            :> Put '[JSON] ProjectSummary
         :<|> Raw
 
 -- | The application, given where projects live and where the built editor is.
@@ -60,7 +76,8 @@ server :: ProjectStore -> FilePath -> Server Api
 server store staticDir =
     pure "ok"
         :<|> (liftIO store.list >>= orFail)
-        :<|> (\pid -> liftIO (store.load pid) >>= orFail)
+        :<|> getProject
+        :<|> (\pid -> snd <$> (liftIO (store.load pid) >>= orFail))
         :<|> putProject
         :<|> serveDirectoryWith editorFiles
     where
@@ -70,14 +87,20 @@ server store staticDir =
                 , -- Revalidate everything (ETags), so a deploy reaches open editors on reload.
                   ssMaxAge = MaxAgeSeconds 0
                 }
-        putProject pid project
+        getProject pid = do
+            (project, summary) <- liftIO (store.load pid) >>= orFail
+            pure (addHeader (summaryRevision summary) project)
+        putProject pid base project
             | projectId project /= pid = throwError err400 {errBody = "expected the body's id to match the path"}
-            | otherwise = liftIO (store.save project) >>= orFail
+            | otherwise = liftIO (store.save base project) >>= orFail
 
 orFail :: Either StoreError a -> Handler a
 orFail = \case
     Right a -> pure a
     Left NotFound -> throwError err404 {errBody = "no such project"}
+    Left (Conflict now) ->
+        -- The current revision, so the editor can tell the user what happened.
+        throwError err409 {errBody = Aeson.encode (Aeson.object ["revision" Aeson..= unparse now]), errHeaders = [("Content-Type", "application/json")]}
     Left (Corrupt why) -> do
         -- The file name and the parser's expectation; never the file's contents.
         liftIO (hPutStrLn stderr ("corrupt project file: " <> Text.unpack why))

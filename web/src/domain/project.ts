@@ -516,30 +516,42 @@ export const unparseProject = (p: Project): unknown => ({
   frames: p.frames.map((f) => ({ hold: f.hold, items: f.items.map(unparseItem) })),
 });
 
+/** How many times the server has saved a project; a save names the one it started from. */
+export type Revision = Brand<number, "Revision">;
+
+export const parseRevision = (raw: unknown): Result<Revision> =>
+  andThen(integer(raw), (n) => (n >= 0 ? ok(brandChecked<number, "Revision">(n)) : err("expected a revision of 0 or more")));
+
 /** What the project list shows. */
 export type ProjectSummary = Brand<
-  { readonly id: ProjectId; readonly name: ProjectName; readonly canvas: Canvas; readonly fps: Fps; readonly frameCount: number },
+  {
+    readonly id: ProjectId;
+    readonly name: ProjectName;
+    readonly canvas: Canvas;
+    readonly fps: Fps;
+    readonly frameCount: number;
+    readonly revision: Revision;
+  },
   "ProjectSummary"
 >;
 
 export const parseProjectSummary = (raw: unknown): Result<ProjectSummary> =>
-  andThen(object(raw), (o) =>
-    andThen(at("id", parseProjectId(o.id)), (id) =>
-      andThen(at("name", parseProjectName(o.name)), (name) =>
-        andThen(at("canvas", parseCanvas(o.canvas)), (canvas) =>
-          andThen(at("fps", parseFps(o.fps)), (fps) =>
-            andThen(
-              at(
-                "frameCount",
-                andThen(integer(o.frameCount), (n) => (n >= 1 && n <= MAX_FRAMES ? ok(n) : err(`expected a frame count from 1 to ${MAX_FRAMES}`))),
-              ),
-              (frameCount) => ok(brandChecked({ id, name, canvas, fps, frameCount })),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const id = yield* field(o, "id", parseProjectId);
+    const name = yield* field(o, "name", parseProjectName);
+    const canvas = yield* field(o, "canvas", parseCanvas);
+    const fps = yield* field(o, "fps", parseFps);
+    const frameCount = yield* field(o, "frameCount", (v) =>
+      andThen(integer(v), (n) => (n >= 1 && n <= MAX_FRAMES ? ok(n) : err(`expected a frame count from 1 to ${MAX_FRAMES}`))),
+    );
+    const revision = yield* field(o, "revision", parseRevision);
+    return ok(brandChecked({ id, name, canvas, fps, frameCount, revision }));
+  });
+
+/** A summary for a project the server has not seen yet (made offline). */
+export const localSummary = (p: Project): ProjectSummary =>
+  brandChecked({ id: p.id, name: p.name, canvas: p.canvas, fps: p.fps, frameCount: p.frames.length, revision: brandChecked<number, "Revision">(0) });
 
 export const parseSummaries = (raw: unknown): Result<ProjectSummary[]> => andThen(array(raw), (xs) => each(xs, parseProjectSummary));
 

@@ -11,9 +11,11 @@ module Anima.Store
     ( ProjectStore (..)
     , StoreError (..)
     , fileStore
+    , modifyProject
     )
 where
 
+import Control.Concurrent.MVar (newMVar, withMVar)
 import Control.Exception (IOException, try)
 import Data.Aeson (FromJSON)
 import Data.Either (partitionEithers)
@@ -28,7 +30,18 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
 
 import Anima.Types.Parse (Parse (..))
-import Anima.Types.Project (Project, ProjectId, ProjectSummary, projectId, summarize, summaryName)
+import Anima.Types.Project
+    ( Project
+    , ProjectId
+    , ProjectSummary
+    , Revision
+    , firstRevision
+    , nextRevision
+    , projectId
+    , summarize
+    , summaryName
+    , summaryRevision
+    )
 
 data StoreError
     = -- | No project has this id.
@@ -37,27 +50,34 @@ data StoreError
       Corrupt Text
     | -- | The disk refused; the text is the operation that failed.
       Unavailable Text
+    | -- | Someone saved first: the project is now at this revision.
+      Conflict Revision
     deriving stock (Eq, Show)
 
 data ProjectStore = ProjectStore
     { list :: IO (Either StoreError [ProjectSummary])
-    , load :: ProjectId -> IO (Either StoreError Project)
-    , save :: Project -> IO (Either StoreError ProjectSummary)
+    , load :: ProjectId -> IO (Either StoreError (Project, ProjectSummary))
+    , save :: Maybe Revision -> Project -> IO (Either StoreError ProjectSummary)
+    {- ^ Save, if the project is still at the revision this edit started from. 'Nothing'
+      saves regardless: a new project, or a caller that means to overwrite.
+    -}
     }
 
 {- | Projects as @<id>.json@ with @<id>.summary.json@ beside each, under one directory.
 
 Writes go to a temporary file in the same directory and are renamed into place, so a
-crash mid-save leaves the previous version, never a truncated one.
+crash mid-save leaves the previous version, never a truncated one. Saves take a lock, so
+the revision check and the write cannot interleave with another save.
 -}
 fileStore :: FilePath -> IO ProjectStore
 fileStore dir = do
     createDirectoryIfMissing True dir
+    lock <- newMVar ()
     pure
         ProjectStore
             { list = listSummaries
             , load = loadProject
-            , save = saveProject
+            , save = \base project -> withMVar lock (const (saveProject base project))
             }
     where
         projectFile pid = dir </> Text.unpack (unparse pid) <> ".json"
@@ -75,22 +95,55 @@ fileStore dir = do
         loadProject pid = do
             exists <- doesFileExist (projectFile pid)
             if exists
-                then readParsed (projectFile pid)
+                then do
+                    project <- readParsed (projectFile pid)
+                    summary <- readParsed (summaryFile pid)
+                    pure ((,) <$> project <*> summary)
                 else pure (Left NotFound)
 
-        saveProject project = guarded "save the project" $ do
+        currentRevision pid = do
+            exists <- doesFileExist (summaryFile pid)
+            if exists then fmap (Just . summaryRevision) <$> readParsed (summaryFile pid) else pure (Right Nothing)
+
+        saveProject base project = guarded "save the project" $ do
             let
                 pid = projectId project
-                summary = summarize project
-            writeAtomically (projectFile pid) (Aeson.encode project)
-            writeAtomically (summaryFile pid) (Aeson.encode summary)
-            pure (Right summary)
+            current <- currentRevision pid
+            case current of
+                Left err -> pure (Left err)
+                Right now
+                    | Just b <- base, Just n <- now, b /= n -> pure (Left (Conflict n))
+                    | otherwise -> do
+                        let
+                            summary = summarize (maybe firstRevision nextRevision now) project
+                        writeAtomically (projectFile pid) (Aeson.encode project)
+                        writeAtomically (summaryFile pid) (Aeson.encode summary)
+                        pure (Right summary)
 
         writeAtomically path bytes = do
             (tmp, h) <- openTempFile dir (takeFileName path <> ".tmp")
             LBS.hPut h bytes
             hClose h
             renameFile tmp path
+
+{- | Load, change and save, retrying once if another save lands in between. For callers
+that edit a project in small steps (the MCP tools) rather than replace it.
+-}
+modifyProject :: ProjectStore -> ProjectId -> (Project -> Either Text Project) -> IO (Either (Either StoreError Text) ProjectSummary)
+modifyProject store pid f = attempt (2 :: Int)
+    where
+        attempt n = do
+            loaded <- store.load pid
+            case loaded of
+                Left err -> pure (Left (Left err))
+                Right (project, summary) -> case f project of
+                    Left why -> pure (Left (Right why))
+                    Right changed -> do
+                        saved <- store.save (Just (summaryRevision summary)) changed
+                        case saved of
+                            Left (Conflict _) | n > 1 -> attempt (n - 1)
+                            Left err -> pure (Left (Left err))
+                            Right s -> pure (Right s)
 
 readParsed :: (FromJSON a) => FilePath -> IO (Either StoreError a)
 readParsed path = do

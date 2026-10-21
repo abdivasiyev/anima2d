@@ -1,5 +1,5 @@
 /** The project list, and the dialog that starts a new project. */
-import { listProjects, saveProject } from "../api";
+import { createProject, listAll } from "../sync";
 import { CANVAS_PRESETS, newProject } from "../domain/edit";
 import { FPS_VALUES, parseFps, parseProjectId, parseProjectName, type ProjectSummary } from "../domain/project";
 import { h } from "./dom";
@@ -90,13 +90,11 @@ const newProjectDialog = (onCreated: (id: string) => void): HTMLDialogElement =>
       return;
     }
     create.disabled = true;
-    void saveProject(newProject(pid.value, pname.value, canvas, pfps.value)).then((r) => {
-      if (!r.ok) {
-        fail(`Could not create the project: ${r.error}.`);
-        return;
-      }
+    const project = newProject(pid.value, pname.value, canvas, pfps.value);
+    // Saved on the device at once; it reaches the server now or once it answers again.
+    void createProject(project).then(() => {
       dialog.close();
-      onCreated(r.value.id);
+      onCreated(project.id);
     });
   });
   return dialog;
@@ -122,7 +120,9 @@ export const homeScreen = (go: (hash: string) => void): HTMLElement => {
     dialog,
   );
 
-  void listProjects().then((r) => {
+  void listAll().then((all) => {
+    const r = all.ok ? { ok: true as const, value: all.value.projects } : all;
+    if (all.ok && all.value.offline) list.before(h("div", { class: "notice offline" }, "The server is out of reach. These are the projects saved on this device; edits sync when it is back."));
     if (!r.ok) {
       list.replaceChildren(h("div", { class: "notice" }, `Projects could not be loaded: ${r.error}.`));
       return;
