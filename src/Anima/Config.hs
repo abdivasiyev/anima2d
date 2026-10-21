@@ -13,7 +13,7 @@ module Anima.Config
     )
 where
 
-import Options.Applicative (Parser, eitherReader, help, long, metavar, option, strOption, value)
+import Options.Applicative (Parser, eitherReader, help, long, metavar, option, optional, strOption, value)
 
 import Data.Text qualified as Text
 
@@ -35,6 +35,7 @@ portNumber (Port raw) = raw
 
 data Config = Config
     { port :: Port
+    , mcpPort :: Maybe Port
     , dataDir :: FilePath
     , staticDir :: FilePath
     }
@@ -43,6 +44,7 @@ configParser :: FilePath -> Parser Config
 configParser defaultStatic =
     Config
         <$> option (eitherReader readPort) (long "port" <> metavar "PORT" <> value (Port 9215) <> help "Loopback port to listen on")
+        <*> optional (option (eitherReader readPort) (long "mcp-port" <> metavar "PORT" <> help "Loopback port for the MCP server (off if not given)"))
         <*> strOption (long "data" <> metavar "DIR" <> help "Directory projects are kept in")
         <*> strOption (long "static" <> metavar "DIR" <> value defaultStatic <> help "The built editor")
     where

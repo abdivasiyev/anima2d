@@ -24,9 +24,11 @@ module Anima.Types.Project
       -- * Settings
     , Fps
     , fpsValue
+    , fpsFrom
     , Width
     , Height
     , Canvas
+    , canvasFrom
 
       -- * Drawings
     , Item
@@ -35,6 +37,12 @@ module Anima.Types.Project
       -- * Project
     , Project
     , projectId
+    , newProject
+    , drawingCount
+    , drawingAt
+    , addItemsAt
+    , replaceItemsAt
+    , insertDrawing
     , Revision
     , firstRevision
     , nextRevision
@@ -640,6 +648,57 @@ instance Parse Project where
             , "fps" .= fpsValue p.fps
             , "frames" .= map frameValue (NonEmpty.toList p.frames)
             ]
+
+-- Edits (for agents) -------------------------------------------------------------------
+
+-- | A new project with one empty drawing.
+newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project
+newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, frames = NonEmpty.singleton (Frame (Hold 1) [])}
+
+drawingCount :: Project -> Int
+drawingCount p = length p.frames
+
+-- | The hold and items of drawing @n@ (from 1), as wire JSON.
+drawingAt :: Int -> Project -> Either Text Value
+drawingAt n p = case drop (n - 1) (NonEmpty.toList p.frames) of
+    (f : _) | n >= 1 -> Right (frameValue f)
+    _ -> Left ("expected a drawing from 1 to " <> tshow (length p.frames))
+
+onDrawing :: Int -> ([Item] -> Either Text [Item]) -> Project -> Either Text Project
+onDrawing n f p
+    | n < 1 || n > length p.frames = Left ("expected a drawing from 1 to " <> tshow (length p.frames))
+    | otherwise = do
+        fs <- traverse (\(i, Frame h xs) -> if i == n then Frame h <$> (f xs >>= limit) else Right (Frame h xs)) (zip [1 ..] (NonEmpty.toList p.frames))
+        frames' <- nonEmpty "expected a frame" fs
+        pure p {frames = frames'}
+    where
+        limit xs = if length xs > maxItemsPerFrame then Left ("expected 0 to " <> tshow maxItemsPerFrame <> " items") else Right xs
+
+-- | Items on top of drawing @n@.
+addItemsAt :: Int -> [Item] -> Project -> Either Text Project
+addItemsAt n new = onDrawing n (Right . (<> new))
+
+-- | Drawing @n@'s items, all replaced.
+replaceItemsAt :: Int -> [Item] -> Project -> Either Text Project
+replaceItemsAt n new = onDrawing n (const (Right new))
+
+-- | A drawing after drawing @n@ (0 puts it first): blank, or a copy of drawing @n@.
+insertDrawing :: Int -> Bool -> Int -> Project -> Either Text Project
+insertDrawing after copy holdFor p
+    | after < 0 || after > length p.frames = Left ("expected a position from 0 to " <> tshow (length p.frames))
+    | length p.frames >= maxFrames = Left ("expected at most " <> tshow maxFrames <> " frames")
+    | otherwise = do
+        h <- holdFrom (Number (fromIntegral holdFor))
+        let
+            fs = NonEmpty.toList p.frames
+            source = if copy && after >= 1 then maybe [] (\(Frame _ xs) -> xs) (lookupAt (after - 1) fs) else []
+            (before, rest) = splitAt after fs
+        frames' <- nonEmpty "expected a frame" (before <> [Frame h source] <> rest)
+        pure p {frames = frames'}
+    where
+        lookupAt i xs = case drop i xs of
+            (x : _) -> Just x
+            [] -> Nothing
 
 -- Revisions -----------------------------------------------------------------------------
 
