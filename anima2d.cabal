@@ -2,7 +2,7 @@ cabal-version:      3.12
 name:               anima2d
 version:            0.1.0.0
 synopsis:           A self-hosted 2D animation studio for the browser and Apple Pencil
-homepage:           https://example.com/abdivasiyev/anima2D
+homepage:           https://example.com/anima2d
 license:            Apache-2.0
 license-file:       LICENSE
 author:             Asliddin Abdivasiyev
