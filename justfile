@@ -32,3 +32,7 @@ npm-hash:
 
 check:
     nix flake check -L
+
+# Build and (re)install the Mac's render agent as a LaunchAgent.
+render:
+    cd render && npm install && npm run build && ./install.sh
