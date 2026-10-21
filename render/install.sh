@@ -19,7 +19,11 @@ cp "$here/dist/agent.mjs" "$home/agent.mjs"
 rm -rf "$home/node_modules"
 mkdir -p "$home/node_modules"
 cp -R "$here/node_modules/@napi-rs" "$home/node_modules/"
+# A multi-output package's link is named after its output: ffmpeg-bin.
+rm -f "$home/ffmpeg" "$home/ffmpeg-bin"
 nix build nixpkgs#ffmpeg.bin --out-link "$home/ffmpeg"
+ffmpeg=$(ls -d "$home"/ffmpeg* | head -n 1)/bin/ffmpeg
+"$ffmpeg" -hide_banner -encoders | grep -q h264_videotoolbox || { echo "this ffmpeg has no VideoToolbox encoder" >&2; exit 1; }
 
 cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,7 +38,7 @@ cat > "$plist" <<PLIST
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>ANIMA2D_FFMPEG</key><string>$home/ffmpeg/bin/ffmpeg</string>
+    <key>ANIMA2D_FFMPEG</key><string>$ffmpeg</string>
     <key>ANIMA2D_DATA</key><string>$HOME/anima2d/projects</string>
   </dict>
   <key>WorkingDirectory</key><string>$home</string>
@@ -48,5 +52,10 @@ cat > "$plist" <<PLIST
 PLIST
 
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+# The old instance takes a moment to unload; bootstrapping over it fails with error 5.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break
+  sleep 1
+done
 launchctl bootstrap "gui/$(id -u)" "$plist"
 echo "installed $label; log: ~/Library/Logs/anima2d-render.log"

@@ -101,9 +101,16 @@ const render = async (job: Job): Promise<void> => {
   ff.stderr.on("data", (d: Buffer) => {
     errors = (errors + d.toString()).slice(-2000);
   });
+  // A missing or broken ffmpeg fails this job, not the agent.
+  let spawnError: Error | undefined;
+  ff.on("error", (e) => {
+    spawnError = e;
+  });
+  ff.stdin.on("error", () => undefined);
   const finished = new Promise<number>((resolve) => ff.on("close", (code) => resolve(code ?? 1)));
   let last = 0;
   for (let i = 0; i < frames; i++) {
+    if (spawnError !== undefined) break;
     drawOutput(ctx, p, Math.floor((i * p.fps) / fps), cache, preset.width, preset.height, preset.camera, preset.fit);
     const pixels = ctx.getImageData(0, 0, preset.width, preset.height).data;
     if (!ff.stdin.write(Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength))) await new Promise((r) => ff.stdin.once("drain", r));
@@ -114,6 +121,7 @@ const render = async (job: Job): Promise<void> => {
   }
   ff.stdin.end();
   const code = await finished;
+  if (spawnError !== undefined) throw new Error(`ffmpeg could not start: ${spawnError.message}`);
   if (code !== 0) throw new Error(`ffmpeg exited with ${code}: ${errors.trim().split("\n").slice(-3).join(" ")}`);
   renameSync(part, out);
 };
@@ -157,6 +165,9 @@ const loop = async (): Promise<void> => {
     unlinkSync(working);
   }
 };
+
+// Jobs left in working by a stop mid-render go back to the queue.
+for (const n of readdirSync(WORKING).filter((x) => x.endsWith(".json"))) renameSync(join(WORKING, n), join(QUEUE, n));
 
 log(`anima2d render agent watching ${QUEUE} (ffmpeg: ${FFMPEG})`);
 void loop();
