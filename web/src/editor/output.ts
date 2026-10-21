@@ -124,14 +124,14 @@ export const drawLayers = (ctx: Ctx, p: Project, t: number, cache: CelCache, opt
 };
 
 /** The finished frame: white paper, every visible drawing layer, through the camera. */
-export const drawOutput = (ctx: Ctx, p: Project, t: number, cache: CelCache, outW: number, outH: number, camera = true): void => {
+export const drawOutput = (ctx: Ctx, p: Project, t: number, cache: CelCache, outW: number, outH: number, camera = true, fit: "contain" | "cover" = "contain"): void => {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, outW, outH);
   const cam = camera ? cameraAt(p, t) : undefined;
   // The canvas is scaled to fill the output (an export preset may differ in size).
-  const k = Math.min(outW / p.canvas.width, outH / p.canvas.height);
+  const k = (fit === "cover" ? Math.max : Math.min)(outW / p.canvas.width, outH / p.canvas.height);
   if (cam === undefined) {
     ctx.translate((outW - p.canvas.width * k) / 2, (outH - p.canvas.height * k) / 2);
     ctx.scale(k, k);

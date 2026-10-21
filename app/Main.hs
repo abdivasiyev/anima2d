@@ -13,6 +13,7 @@ import Anima.Assets (assetsApp)
 import Anima.Config (Config (..), configParser, portNumber)
 import Anima.Ids (newUuid)
 import Anima.Mcp (mcpApp)
+import Anima.Renders (rendersApp)
 import Anima.Server (app)
 import Anima.Store (fileStore)
 
@@ -39,7 +40,9 @@ main = do
     let
         web = app store cfg.staticDir
         assets = assetsApp cfg.dataDir newUuid
+        renders = rendersApp cfg.dataDir store newUuid
     runSettings (listen cfg.port) $ \req respond ->
         case Wai.pathInfo req of
             ("api" : "assets" : _) -> assets req respond
+            ("api" : "renders" : _) -> renders req respond
             _ -> web req respond

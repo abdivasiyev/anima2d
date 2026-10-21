@@ -115,6 +115,7 @@ import { alongPath, inbetween } from "../editor/tween";
 import { clampScale, cssTransform, fit, pinch, snapRotation, toCanvas, type View } from "../editor/view";
 import { ProjectSync, type Opened, type SyncState } from "../sync";
 import { AudioEngine } from "./audio";
+import { openExport } from "./export";
 import { h } from "./dom";
 import { fullscreenSupported, isFullscreen, onFullscreenChange, runningAsApp, toggleFullscreen } from "./fullscreen";
 import { icon, iconButton, setIcon, type IconName } from "./icons";
@@ -241,6 +242,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const undoBtn = iconButton("undo", "Undo", "⌘Z");
   const redoBtn = iconButton("redo", "Redo", "⇧⌘Z");
   const fsBtn = iconButton("fullscreen", "Fullscreen", "F");
+  const exportBtn = h("button", { type: "button", class: "btn small primary" }, icon("export"), "Export");
   fsBtn.hidden = !fullscreenSupported() || runningAsApp();
   const topbar = h(
     "header",
@@ -255,6 +257,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     undoBtn,
     redoBtn,
     fsBtn,
+    h("div", { class: "sep" }),
+    exportBtn,
   );
 
   // Tool rail.
@@ -1905,6 +1909,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     openPopover(camPop, cameraBtn);
   }, opts);
   camView.addEventListener("change", () => { updateSettings("cameraView", camView.checked); }, opts);
+  exportBtn.addEventListener("click", () => {
+    if (playing) stop();
+    openExport({ project, flush, audio: () => audio.decoded, say }, root);
+  }, opts);
   camSet.addEventListener("click", () => {
     const k = cameraFromView();
     if (!k.ok) {

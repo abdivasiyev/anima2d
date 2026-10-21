@@ -7,3 +7,5 @@ result-*
 node_modules/
 web/dist/
 data/
+render/node_modules/
+render/dist/

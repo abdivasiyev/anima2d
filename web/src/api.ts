@@ -5,7 +5,7 @@
  * "Offline" is its own outcome, distinct from a refusal: the server being out of reach is
  * normal here (a home server loses power), and the editor carries on from the device copy.
  */
-import { andThen, err, ok, type Result } from "./domain/result";
+import { andThen, each, err, ok, type Result } from "./domain/result";
 import {
   parseProject,
   parseProjectSummary,
@@ -17,7 +17,7 @@ import {
   type ProjectSummary,
   type Revision,
 } from "./domain/project";
-import { object } from "./domain/wire";
+import { array, object } from "./domain/wire";
 
 export type Reply<T> = { readonly kind: "ok"; readonly value: T } | { readonly kind: "offline" } | { readonly kind: "conflict"; readonly revision: Revision } | { readonly kind: "error"; readonly error: string };
 
@@ -91,3 +91,35 @@ export const uploadAsset = async (file: Blob): Promise<Reply<string>> =>
   );
 
 export const assetUrl = (id: string): string => `/api/assets/${encodeURIComponent(id)}`;
+
+export interface RenderStatus {
+  readonly id: string;
+  readonly state: "queued" | "rendering" | "done" | "failed";
+  readonly progress: number;
+  readonly project: string;
+  readonly preset: string;
+  readonly created: string;
+  readonly message: string;
+}
+
+const STATES = ["queued", "rendering", "done", "failed"] as const;
+
+const parseStatus = (raw: unknown): Result<RenderStatus> =>
+  andThen(object(raw), (o) => {
+    const state = STATES.find((s) => s === o.state);
+    const text = (v: unknown): string => (typeof v === "string" ? v : "");
+    if (typeof o.id !== "string" || state === undefined || typeof o.progress !== "number") return err("expected a render status");
+    return ok({ id: o.id, state, progress: o.progress, project: text(o.project), preset: text(o.preset), created: text(o.created), message: text(o.message) });
+  });
+
+/** Queue a render on the Mac; the server snapshots the project as it is saved now. */
+export const queueRender = async (projectId: string, preset: unknown): Promise<Reply<string>> =>
+  parsed(
+    await request("/api/renders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: projectId, preset }) }),
+    (r) => andThen(object(r.body), (o) => (typeof o.id === "string" ? ok(o.id) : err("the server sent no render id"))),
+  );
+
+export const listRenders = async (): Promise<Reply<RenderStatus[]>> =>
+  parsed(await request("/api/renders"), (r) => andThen(array(r.body), (xs) => each(xs, parseStatus)));
+
+export const renderUrl = (id: string): string => `/api/renders/${encodeURIComponent(id)}/video`;

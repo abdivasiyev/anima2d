@@ -1,0 +1,16 @@
+{
+  "name": "anima2d-render",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The Mac's render agent: anima2D videos drawn with Skia and encoded on the GPU (VideoToolbox)",
+  "scripts": {
+    "build": "esbuild src/agent.ts --bundle --platform=node --format=esm --target=node20 --external:@napi-rs/canvas --outfile=dist/agent.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.80"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  }
+}

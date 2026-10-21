@@ -35,6 +35,7 @@ library
                     , Anima.Config
                     , Anima.Ids
                     , Anima.Mcp
+                    , Anima.Renders
                     , Anima.Server
                     , Anima.Store
                     , Anima.Types.Parse
@@ -52,6 +53,7 @@ library
                     , scientific
                     , servant-server
                     , text
+                    , time
                     , vector
                     , wai
                     , wai-app-static

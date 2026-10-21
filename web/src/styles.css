@@ -1412,3 +1412,96 @@ dialog::backdrop {
 .workspace.locked {
   cursor: not-allowed;
 }
+
+/* Export ------------------------------------------------------------------------------- */
+
+dialog.export {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.preset-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.preset {
+  position: relative;
+}
+
+.preset-del {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.preset-del:hover {
+  color: var(--danger);
+}
+
+.custom-preset summary {
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.custom-preset[open] {
+  display: grid;
+  gap: 12px;
+}
+
+.custom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 12px;
+  margin-top: 10px;
+}
+
+.custom-grid .toggle {
+  align-self: end;
+}
+
+dialog progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--accent);
+}
+
+.render-list {
+  display: grid;
+  gap: 6px;
+}
+
+.render-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 4px 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.render-name {
+  font-weight: 500;
+}
+
+.render-state {
+  flex: 1;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.render-row.failed .render-state {
+  color: var(--danger);
+}
+
+a.btn {
+  text-decoration: none;
+}

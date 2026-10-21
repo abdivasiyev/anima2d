@@ -39,6 +39,11 @@ export class AudioEngine {
     return p;
   }
 
+  /** The decoded tracks, for mixing into an export. */
+  get decoded(): ReadonlyMap<string, AudioBuffer> {
+    return this.buffers;
+  }
+
   peaks(asset: string): Float32Array | undefined {
     return this.waves.get(asset);
   }
