@@ -32,17 +32,20 @@ module Anima.Types.Project
 
       -- * Drawings
     , Item
-    , Frame
 
       -- * Project
     , Project
     , projectId
+    , duration
     , newProject
-    , drawingCount
+    , pickLayer
+    , layersSummary
     , drawingAt
     , addItemsAt
     , replaceItemsAt
     , insertDrawing
+    , addLayer
+    , AssetId
     , Revision
     , firstRevision
     , nextRevision
@@ -64,7 +67,8 @@ where
 import Control.Monad (unless, when, (>=>))
 import Data.Aeson (FromJSON, ToJSON, Value (..), object, (.=))
 import Data.Char (isAsciiLower, isControl, isDigit, isHexDigit, ord, toLower)
-import Data.List.NonEmpty (NonEmpty)
+import Data.Containers.ListUtils (nubOrd)
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (fromMaybe)
 import Data.Scientific (fromFloatDigits, isInteger, toBoundedInteger, toRealFloat)
 import Data.Text (Text)
@@ -265,17 +269,17 @@ data RawCanvas = RawCanvas {width :: Int, height :: Int}
 
 -- Values items are made of --------------------------------------------------------------
 
--- | Colour renders under line, always.
-data Layer = LineLayer | ColorLayer
+-- | Which plane of a drawing an item is on: colour renders under line, always. (On the wire: "layer".)
+data Plane = LinePlane | ColorPlane
     deriving stock (Bounded, Enum, Eq, Ord, Show)
 
-layerName :: Layer -> Text
-layerName = \case
-    LineLayer -> "line"
-    ColorLayer -> "color"
+planeName :: Plane -> Text
+planeName = \case
+    LinePlane -> "line"
+    ColorPlane -> "color"
 
-layerFrom :: Value -> Either Text Layer
-layerFrom = oneOf layerName "expected a layer of \"line\" or \"color\""
+planeFrom :: Value -> Either Text Plane
+planeFrom = oneOf planeName "expected a layer of \"line\" or \"color\""
 
 data Brush = Pen | Pencil | Marker | Paint
     deriving stock (Bounded, Enum, Eq, Ord, Show)
@@ -410,7 +414,7 @@ polygonsFrom =
 -- Items ---------------------------------------------------------------------------------
 
 -- | A freehand line: pen, pencil, marker, or the paint brush.
-data StrokeItem = StrokeItem {layer :: Layer, brush :: Brush, color :: Color, size :: BrushSize, opacity :: Opacity, points :: NonEmpty Point}
+data StrokeItem = StrokeItem {layer :: Plane, brush :: Brush, color :: Color, size :: BrushSize, opacity :: Opacity, points :: NonEmpty Point}
     deriving stock (Eq, Show)
 
 -- | The pixel eraser's path; it cuts both layers at its place in the order.
@@ -418,12 +422,12 @@ data EraseItem = EraseItem {size :: BrushSize, points :: NonEmpty Point}
     deriving stock (Eq, Show)
 
 -- | A path stamped with grass, birds, stars and the like.
-data ScatterItem = ScatterItem {layer :: Layer, brush :: Scatter, color :: Color, size :: BrushSize, opacity :: Opacity, seed :: Seed, points :: NonEmpty Point}
+data ScatterItem = ScatterItem {layer :: Plane, brush :: Scatter, color :: Color, size :: BrushSize, opacity :: Opacity, seed :: Seed, points :: NonEmpty Point}
     deriving stock (Eq, Show)
 
 -- | A line, rectangle, ellipse or triangle, by centre, size and turn.
 data ShapeItem = ShapeItem
-    { layer :: Layer
+    { layer :: Plane
     , shape :: ShapeKind
     , color :: Color
     , size :: BrushSize
@@ -437,11 +441,11 @@ data ShapeItem = ShapeItem
     deriving stock (Eq, Show)
 
 -- | A quadratic Bézier: start, control point, end.
-data CurveItem = CurveItem {layer :: Layer, color :: Color, size :: BrushSize, opacity :: Opacity, points :: (Vec, Vec, Vec)}
+data CurveItem = CurveItem {layer :: Plane, color :: Color, size :: BrushSize, opacity :: Opacity, points :: (Vec, Vec, Vec)}
     deriving stock (Eq, Show)
 
 -- | A paint-bucket fill: outlines filled even-odd, so holes stay open.
-data FillItem = FillItem {layer :: Layer, color :: Color, opacity :: Opacity, polygons :: NonEmpty (NonEmpty Vec)}
+data FillItem = FillItem {layer :: Plane, color :: Color, opacity :: Opacity, polygons :: NonEmpty (NonEmpty Vec)}
     deriving stock (Eq, Show)
 
 data Item
@@ -475,7 +479,7 @@ instance Parse Item where
             KStroke ->
                 fmap Stroke
                     $ StrokeItem
-                        <$> field "layer" layerFrom o
+                        <$> field "layer" planeFrom o
                         <*> field "brush" (oneOf brushName "expected a brush of \"pen\", \"pencil\", \"marker\" or \"paint\"") o
                         <*> field "color" colorFrom o
                         <*> field "size" brushSizeFrom o
@@ -485,7 +489,7 @@ instance Parse Item where
             KScatter ->
                 fmap ScatterStroke
                     $ ScatterItem
-                        <$> field "layer" layerFrom o
+                        <$> field "layer" planeFrom o
                         <*> field "brush" (oneOf scatterName "expected a scatter brush of \"grass\", \"birds\", \"stars\", \"leaves\", \"flowers\" or \"spray\"") o
                         <*> field "color" colorFrom o
                         <*> field "size" brushSizeFrom o
@@ -495,7 +499,7 @@ instance Parse Item where
             KShape ->
                 fmap Shape
                     $ ShapeItem
-                        <$> field "layer" layerFrom o
+                        <$> field "layer" planeFrom o
                         <*> field "shape" (oneOf shapeName "expected a shape of \"line\", \"rect\", \"ellipse\" or \"triangle\"") o
                         <*> field "color" colorFrom o
                         <*> field "size" brushSizeFrom o
@@ -508,24 +512,24 @@ instance Parse Item where
             KCurve ->
                 fmap Curve
                     $ CurveItem
-                        <$> field "layer" layerFrom o
+                        <$> field "layer" planeFrom o
                         <*> field "color" colorFrom o
                         <*> field "size" brushSizeFrom o
                         <*> field "opacity" opacityFrom o
                         <*> field "points" curveFrom o
             KFill ->
                 fmap Fill
-                    $ FillItem <$> field "layer" layerFrom o <*> field "color" colorFrom o <*> field "opacity" opacityFrom o <*> field "polygons" polygonsFrom o
+                    $ FillItem <$> field "layer" planeFrom o <*> field "color" colorFrom o <*> field "opacity" opacityFrom o <*> field "polygons" polygonsFrom o
         checkFillBudget item
         pure item
     unparse = \case
         Stroke StrokeItem {..} ->
-            object ["kind" .= kindName KStroke, "layer" .= layerName layer, "brush" .= brushName brush, "color" .= colorValue color, "size" .= sizeValue size, "opacity" .= opacityValue opacity, "points" .= pointsValue points]
+            object ["kind" .= kindName KStroke, "layer" .= planeName layer, "brush" .= brushName brush, "color" .= colorValue color, "size" .= sizeValue size, "opacity" .= opacityValue opacity, "points" .= pointsValue points]
         Erase EraseItem {..} -> object ["kind" .= kindName KErase, "size" .= sizeValue size, "points" .= pointsValue points]
         ScatterStroke ScatterItem {..} ->
             object
                 [ "kind" .= kindName KScatter
-                , "layer" .= layerName layer
+                , "layer" .= planeName layer
                 , "brush" .= scatterName brush
                 , "color" .= colorValue color
                 , "size" .= sizeValue size
@@ -536,7 +540,7 @@ instance Parse Item where
         Shape ShapeItem {..} ->
             object
                 [ "kind" .= kindName KShape
-                , "layer" .= layerName layer
+                , "layer" .= planeName layer
                 , "shape" .= shapeName shape
                 , "color" .= colorValue color
                 , "size" .= sizeValue size
@@ -551,11 +555,11 @@ instance Parse Item where
             let
                 (a, c, b) = points
             in
-                object ["kind" .= kindName KCurve, "layer" .= layerName layer, "color" .= colorValue color, "size" .= sizeValue size, "opacity" .= opacityValue opacity, "points" .= list (map vecValue [a, c, b])]
+                object ["kind" .= kindName KCurve, "layer" .= planeName layer, "color" .= colorValue color, "size" .= sizeValue size, "opacity" .= opacityValue opacity, "points" .= list (map vecValue [a, c, b])]
         Fill FillItem {..} ->
             object
                 [ "kind" .= kindName KFill
-                , "layer" .= layerName layer
+                , "layer" .= planeName layer
                 , "color" .= colorValue color
                 , "opacity" .= opacityValue opacity
                 , "polygons" .= list [list (map vecValue (NonEmpty.toList p)) | p <- NonEmpty.toList polygons]
@@ -582,7 +586,7 @@ strokeV1From =
         ps <- field "points" pointsFrom o
         pure
             $ if isPen
-                then Stroke StrokeItem {layer = LineLayer, brush = Pen, color = c, size = s, opacity = Opacity 1, points = ps}
+                then Stroke StrokeItem {layer = LinePlane, brush = Pen, color = c, size = s, opacity = Opacity 1, points = ps}
                 else Erase EraseItem {size = s, points = ps}
     where
         toolV1 = \case
@@ -590,7 +594,7 @@ strokeV1From =
             String "eraser" -> Right False
             _ -> Left "expected a tool of \"pen\" or \"eraser\""
 
--- Frames --------------------------------------------------------------------------------
+-- Cels ----------------------------------------------------------------------------------
 
 -- | How many timeline frames one drawing is exposed for: 1 (on ones) to 24.
 newtype Hold = Hold Int
@@ -599,16 +603,214 @@ newtype Hold = Hold Int
 holdFrom :: Value -> Either Text Hold
 holdFrom = asInteger >=> \n -> if n >= 1 && n <= 24 then Right (Hold n) else Left "expected a hold from 1 to 24 frames"
 
-data Frame = Frame Hold [Item]
+-- | The classic timing marks: keys, the breakdowns between them, and the inbetweens.
+data Mark = NoMark | Key | Breakdown | Inbetween
+    deriving stock (Bounded, Enum, Eq, Ord, Show)
+
+markName :: Mark -> Text
+markName = \case
+    NoMark -> "none"
+    Key -> "key"
+    Breakdown -> "breakdown"
+    Inbetween -> "inbetween"
+
+-- | One drawing on a layer's timeline, held for its hold.
+data Cel = Cel Hold Mark [Item]
     deriving stock (Eq, Show)
 
--- | A drawing, its items read from the list named @key@ (@items@, or format 1's @strokes@).
-frameFrom :: Text -> (Value -> Either Text Item) -> Value -> Either Text Frame
-frameFrom key itemFrom =
-    asObject >=> \o -> Frame <$> field "hold" holdFrom o <*> field key (asArray >=> bounded key 0 maxItemsPerFrame >=> indexed itemFrom) o
+itemsFrom :: Text -> (Value -> Either Text Item) -> Value -> Either Text [Item]
+itemsFrom key itemFrom = asArray >=> bounded key 0 maxItemsPerFrame >=> indexed itemFrom
 
-frameValue :: Frame -> Value
-frameValue (Frame (Hold n) xs) = object ["hold" .= n, "items" .= map unparse xs]
+celV3From :: Value -> Either Text Cel
+celV3From =
+    asObject >=> \o ->
+        Cel
+            <$> field "hold" holdFrom o
+            <*> field "mark" (oneOf markName "expected a mark of \"none\", \"key\", \"breakdown\" or \"inbetween\"") o
+            <*> field "items" (itemsFrom "items" parse) o
+
+-- | A format 2 drawing, or (with @strokes@) a format 1 one.
+celOldFrom :: Text -> (Value -> Either Text Item) -> Value -> Either Text Cel
+celOldFrom key itemFrom = asObject >=> \o -> Cel <$> field "hold" holdFrom o <*> pure NoMark <*> field key (itemsFrom key itemFrom) o
+
+celValue :: Cel -> Value
+celValue (Cel (Hold n) m xs) = object ["hold" .= n, "mark" .= markName m, "items" .= map unparse xs]
+
+-- | A layer's cels; formats 1 and 2 called them frames, and their messages still do.
+celsFrom :: Text -> (Value -> Either Text Cel) -> Value -> Either Text (NonEmpty Cel)
+celsFrom what celFrom = asArray >=> bounded what 1 maxFrames >=> indexed celFrom >=> nonEmpty ("expected 1 to " <> tshow maxFrames <> " " <> what)
+
+-- Layers --------------------------------------------------------------------------------
+
+maxLayers :: Int
+maxLayers = 20
+
+slugFrom :: Text -> Int -> Value -> Either Text Text
+slugFrom expected hi =
+    asText >=> \s ->
+        if Text.length s >= 1 && Text.length s <= hi && Text.all (\c -> isAsciiLower c || isDigit c || c == '-') s
+            then Right s
+            else Left expected
+
+-- | A layer's or an audio track's id within its project.
+newtype LayerId = LayerId Text
+    deriving stock (Eq, Ord, Show)
+
+layerIdFrom :: Value -> Either Text LayerId
+layerIdFrom = fmap LayerId . slugFrom "expected a layer id of 1 to 32 of a-z, 0-9 and '-'" 32
+
+-- | An uploaded file: a reference image or video, or audio.
+newtype AssetId = AssetId Text
+    deriving stock (Eq, Ord, Show)
+
+instance Parse AssetId where
+    type Raw AssetId = Text
+    parse = fmap AssetId . slugFrom "expected an asset id of 1 to 64 of a-z, 0-9 and '-'" 64 . String
+    unparse (AssetId a) = a
+
+assetIdFrom :: Value -> Either Text AssetId
+assetIdFrom = asText >=> parse
+
+-- | A layer's or track's name: 1 to 40 characters (as the editor counts them), trimmed.
+newtype Label = Label Text
+    deriving stock (Eq, Ord, Show)
+
+labelFrom :: Value -> Either Text Label
+labelFrom =
+    asText >=> \raw ->
+        let
+            t = Text.strip raw
+        in
+            if
+                | Text.null t || utf16Length t > 40 -> Left "expected a name of 1 to 40 characters"
+                | Text.any isControl t -> Left "expected a name without control characters"
+                | otherwise -> Right (Label t)
+
+boolFrom :: Value -> Either Text Bool
+boolFrom = \case
+    Bool b -> Right b
+    _ -> Left "expected true or false"
+
+data Media = Image | Video
+    deriving stock (Bounded, Enum, Eq, Ord, Show)
+
+mediaName :: Media -> Text
+mediaName = Text.toLower . tshow
+
+-- | What every layer has: an id, a name, and how it shows.
+data LayerLook = LayerLook {layerId :: LayerId, label :: Label, visible :: Bool, locked :: Bool, opacity :: Opacity}
+    deriving stock (Eq, Show)
+
+data Layer
+    = -- | Drawings on a timeline; holding the last one to the end makes a background.
+      DrawingLayer LayerLook Bool (NonEmpty Cel)
+    | -- | An image or video to trace over; shown in the editor, never exported.
+      ReferenceLayer LayerLook AssetId Media
+    deriving stock (Eq, Show)
+
+data LayerKind = KDrawing | KReference
+    deriving stock (Bounded, Enum, Eq)
+
+layerKindName :: LayerKind -> Text
+layerKindName = \case
+    KDrawing -> "drawing"
+    KReference -> "reference"
+
+layerFrom :: Value -> Either Text Layer
+layerFrom =
+    asObject >=> \o -> do
+        kind <- field "kind" (oneOf layerKindName "expected a layer kind of \"drawing\" or \"reference\"") o
+        look <-
+            LayerLook
+                <$> field "id" layerIdFrom o
+                <*> field "name" labelFrom o
+                <*> field "visible" boolFrom o
+                <*> field "locked" boolFrom o
+                <*> field "opacity" opacityFrom o
+        case kind of
+            KDrawing -> DrawingLayer look <$> field "holdLast" boolFrom o <*> field "cels" (celsFrom "cels" celV3From) o
+            KReference -> ReferenceLayer look <$> field "asset" assetIdFrom o <*> field "media" (oneOf mediaName "expected media of \"image\" or \"video\"") o
+
+layerValue :: Layer -> Value
+layerValue l = object (look <> rest)
+    where
+        (kind, lk, rest) = case l of
+            DrawingLayer x holdLast cels -> ("drawing" :: Text, x, ["holdLast" .= holdLast, "cels" .= map celValue (NonEmpty.toList cels)])
+            ReferenceLayer x (AssetId a) m -> ("reference", x, ["asset" .= a, "media" .= mediaName m])
+        LayerId lid = lk.layerId
+        Label nm = lk.label
+        Opacity op = lk.opacity
+        look = ["kind" .= kind, "id" .= lid, "name" .= nm, "visible" .= lk.visible, "locked" .= lk.locked, "opacity" .= number op]
+
+lookOf :: Layer -> LayerLook
+lookOf = \case
+    DrawingLayer x _ _ -> x
+    ReferenceLayer x _ _ -> x
+
+-- Camera --------------------------------------------------------------------------------
+
+maxCameraKeys :: Int
+maxCameraKeys = 1000
+
+maxTimelineFrame :: Int
+maxTimelineFrame = 99999
+
+data Ease = Linear | EaseIn | EaseOut | EaseInOut
+    deriving stock (Bounded, Enum, Eq, Ord, Show)
+
+easeName :: Ease -> Text
+easeName = \case
+    Linear -> "linear"
+    EaseIn -> "in"
+    EaseOut -> "out"
+    EaseInOut -> "inOut"
+
+data CameraKey = CameraKey {frame :: Int, center :: Vec, zoom :: Double, turn :: Angle, ease :: Ease}
+    deriving stock (Eq, Show)
+
+frameIndexFrom :: Value -> Either Text Int
+frameIndexFrom = asInteger >=> \n -> if n >= 0 && n <= maxTimelineFrame then Right n else Left ("expected a frame from 0 to " <> tshow maxTimelineFrame)
+
+cameraKeyFrom :: Value -> Either Text CameraKey
+cameraKeyFrom =
+    asObject >=> \o ->
+        CameraKey
+            <$> field "frame" frameIndexFrom o
+            <*> field "center" vecFrom o
+            <*> field "zoom" (ranged Prelude.id 0.1 10 "expected a zoom from 0.1 to 10") o
+            <*> field "rotation" angleFrom o
+            <*> field "ease" (oneOf easeName "expected an ease of \"linear\", \"in\", \"out\" or \"inOut\"") o
+
+cameraKeyValue :: CameraKey -> Value
+cameraKeyValue k = let Angle a = k.turn in object ["frame" .= k.frame, "center" .= vecValue k.center, "zoom" .= number k.zoom, "rotation" .= number a, "ease" .= easeName k.ease]
+
+-- Audio ---------------------------------------------------------------------------------
+
+maxAudioTracks :: Int
+maxAudioTracks = 8
+
+data AudioTrack = AudioTrack {trackId :: LayerId, asset :: AssetId, trackName :: Label, offset :: Int, volume :: Double, muted :: Bool}
+    deriving stock (Eq, Show)
+
+audioTrackFrom :: Value -> Either Text AudioTrack
+audioTrackFrom =
+    asObject >=> \o ->
+        AudioTrack
+            <$> field "id" layerIdFrom o
+            <*> field "asset" assetIdFrom o
+            <*> field "name" labelFrom o
+            <*> field "offset" (asInteger >=> \n -> if abs n <= maxTimelineFrame then Right n else Left ("expected an offset within " <> tshow maxTimelineFrame <> " frames")) o
+            <*> field "volume" (ranged Prelude.id 0 1 "expected a volume from 0 to 1") o
+            <*> field "muted" boolFrom o
+
+audioTrackValue :: AudioTrack -> Value
+audioTrackValue a =
+    let
+        LayerId tid = a.trackId
+        AssetId aid = a.asset
+        Label nm = a.trackName
+    in
+        object ["id" .= tid, "asset" .= aid, "name" .= nm, "offset" .= a.offset, "volume" .= number a.volume, "muted" .= a.muted]
 
 -- Project -------------------------------------------------------------------------------
 
@@ -617,7 +819,9 @@ data Project = Project
     , name :: ProjectName
     , canvas :: Canvas
     , fps :: Fps
-    , frames :: NonEmpty Frame
+    , layers :: NonEmpty Layer
+    , camera :: [CameraKey]
+    , audio :: [AudioTrack]
     }
     deriving stock (Eq, Show)
     deriving (FromJSON, ToJSON) via Parsed Project
@@ -625,80 +829,189 @@ data Project = Project
 projectId :: Project -> ProjectId
 projectId p = p.id
 
+-- | The rules that span fields, in the editor's order and words.
+checked :: Project -> Either Text Project
+checked p
+    | length p.layers > maxLayers = Left ("layers: expected 1 to " <> tshow maxLayers <> " layers")
+    | not (any isDrawingLayer p.layers) = Left "layers: expected at least one drawing layer"
+    | distinct (map (layerIdText . lookOf) (NonEmpty.toList p.layers)) = Left "layers: expected every layer id to be different"
+    | length p.camera > maxCameraKeys = Left ("camera: expected 0 to " <> tshow maxCameraKeys <> " keys")
+    | or (zipWith (\a b -> b.frame <= a.frame) p.camera (drop 1 p.camera)) = Left "camera: expected keys in frame order, one per frame"
+    | length p.audio > maxAudioTracks = Left ("audio: expected 0 to " <> tshow maxAudioTracks <> " tracks")
+    | distinct (map (\a -> let LayerId t = a.trackId in t) p.audio) = Left "audio: expected every track id to be different"
+    | otherwise = Right p
+    where
+        distinct xs = length (nubOrd xs) /= length xs
+        layerIdText l = let LayerId t = l.layerId in t
+
+isDrawingLayer :: Layer -> Bool
+isDrawingLayer = \case
+    DrawingLayer {} -> True
+    ReferenceLayer {} -> False
+
+-- | Formats 1 and 2: one list of drawings, which becomes the first layer.
+firstLayer :: NonEmpty Cel -> Layer
+firstLayer = DrawingLayer (LayerLook (LayerId "layer-1") (Label "Layer 1") True False (Opacity 1)) False
+
 instance Parse Project where
     type Raw Project = Value
     parse =
         asObject >=> \o -> do
-            frame <- case KeyMap.lookup "format" o of
-                Just (Number 1) -> Right (frameFrom "strokes" strokeV1From)
-                Just (Number 2) -> Right (frameFrom "items" parse)
-                _ -> Left "format: expected project format 1 or 2"
-            Project
-                <$> field "id" (asText >=> parse) o
-                <*> field "name" (asText >=> parse) o
-                <*> field "canvas" canvasFrom o
-                <*> field "fps" fpsFrom o
-                <*> field "frames" (asArray >=> bounded "frames" 1 maxFrames >=> indexed frame >=> nonEmpty "expected a frame") o
+            version <- case KeyMap.lookup "format" o of
+                Just (Number 1) -> Right (1 :: Int)
+                Just (Number 2) -> Right 2
+                Just (Number 3) -> Right 3
+                _ -> Left "format: expected project format 1, 2 or 3"
+            pid <- field "id" (asText >=> parse) o
+            pname <- field "name" (asText >=> parse) o
+            c <- field "canvas" canvasFrom o
+            f <- field "fps" fpsFrom o
+            if version < 3
+                then do
+                    cels <- field "frames" (celsFrom "frames" (if version == 1 then celOldFrom "strokes" strokeV1From else celOldFrom "items" parse)) o
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = []}
+                else do
+                    ls <- field "layers" (asArray >=> bounded "layers" 1 maxLayers >=> indexed layerFrom >=> nonEmpty ("expected 1 to " <> tshow maxLayers <> " layers")) o
+                    cam <- field "camera" (asArray >=> bounded "keys" 0 maxCameraKeys >=> indexed cameraKeyFrom) o
+                    au <- field "audio" (asArray >=> bounded "tracks" 0 maxAudioTracks >=> indexed audioTrackFrom) o
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au}
     unparse p =
         object
-            [ "format" .= (2 :: Int)
+            [ "format" .= (3 :: Int)
             , "id" .= unparse p.id
             , "name" .= unparse p.name
             , "canvas" .= canvasValue p.canvas
             , "fps" .= fpsValue p.fps
-            , "frames" .= map frameValue (NonEmpty.toList p.frames)
+            , "layers" .= map layerValue (NonEmpty.toList p.layers)
+            , "camera" .= map cameraKeyValue p.camera
+            , "audio" .= map audioTrackValue p.audio
             ]
+
+-- | The timeline's length: its longest drawing layer.
+duration :: Project -> Int
+duration p = maximum (1 :| [sum [n | Cel (Hold n) _ _ <- NonEmpty.toList cels] | DrawingLayer _ _ cels <- NonEmpty.toList p.layers])
 
 -- Edits (for agents) -------------------------------------------------------------------
 
--- | A new project with one empty drawing.
+-- | A new project with one drawing layer and one empty drawing.
 newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project
-newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, frames = NonEmpty.singleton (Frame (Hold 1) [])}
+newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark []))), camera = [], audio = []}
 
-drawingCount :: Project -> Int
-drawingCount p = length p.frames
-
--- | The hold and items of drawing @n@ (from 1), as wire JSON.
-drawingAt :: Int -> Project -> Either Text Value
-drawingAt n p = case drop (n - 1) (NonEmpty.toList p.frames) of
-    (f : _) | n >= 1 -> Right (frameValue f)
-    _ -> Left ("expected a drawing from 1 to " <> tshow (length p.frames))
-
-onDrawing :: Int -> ([Item] -> Either Text [Item]) -> Project -> Either Text Project
-onDrawing n f p
-    | n < 1 || n > length p.frames = Left ("expected a drawing from 1 to " <> tshow (length p.frames))
-    | otherwise = do
-        fs <- traverse (\(i, Frame h xs) -> if i == n then Frame h <$> (f xs >>= limit) else Right (Frame h xs)) (zip [1 ..] (NonEmpty.toList p.frames))
-        frames' <- nonEmpty "expected a frame" fs
-        pure p {frames = frames'}
+{- | The layer an agent means: by id, or (none given) the topmost drawing layer. Returned
+as its index, bottom first.
+-}
+pickLayer :: Maybe Text -> Project -> Either Text Int
+pickLayer want p = case [i | (i, l) <- indexedLayers, isDrawingLayer l, maybe True (== layerIdText l) want] of
+    [] -> Left (maybe "expected a drawing layer" ("expected a drawing layer with id " <>) want)
+    is -> Right (last is)
     where
-        limit xs = if length xs > maxItemsPerFrame then Left ("expected 0 to " <> tshow maxItemsPerFrame <> " items") else Right xs
+        indexedLayers = zip [0 ..] (NonEmpty.toList p.layers)
+        layerIdText l = let LayerId t = (lookOf l).layerId in t
 
--- | Items on top of drawing @n@.
-addItemsAt :: Int -> [Item] -> Project -> Either Text Project
-addItemsAt n new = onDrawing n (Right . (<> new))
+-- | The layers, for an agent: id, name, kind and number of drawings.
+layersSummary :: Project -> Value
+layersSummary p =
+    toJSONList
+        [ object (["index" .= i, "id" .= t, "name" .= nm, "kind" .= kind] <> extra)
+        | (i, l) <- zip [0 :: Int ..] (NonEmpty.toList p.layers)
+        , let
+            LayerLook (LayerId t) (Label nm) _ _ _ = lookOf l
+            (kind, extra) = case l of
+                DrawingLayer _ holdLast cels -> ("drawing" :: Text, ["drawings" .= length cels, "holdLast" .= holdLast])
+                ReferenceLayer {} -> ("reference", [])
+        ]
+    where
+        toJSONList = Array . Vector.fromList
+
+onLayerCels :: Int -> (NonEmpty Cel -> Either Text [Cel]) -> Project -> Either Text Project
+onLayerCels li f p = do
+    ls <- traverse step (zip [0 ..] (NonEmpty.toList p.layers))
+    layers' <- nonEmpty "expected a layer" ls
+    checked p {layers = layers'}
+    where
+        step (i, l) = case l of
+            DrawingLayer look holdLast cels | i == li -> do
+                cs <- f cels
+                when (length cs > maxFrames) $ Left ("expected at most " <> tshow maxFrames <> " drawings on a layer")
+                DrawingLayer look holdLast <$> nonEmpty "expected to keep at least one drawing on a layer" cs
+            _ -> Right l
+
+celsOf :: Int -> Project -> [Cel]
+celsOf li p = case drop li (NonEmpty.toList p.layers) of
+    (DrawingLayer _ _ cels : _) -> NonEmpty.toList cels
+    _ -> []
+
+-- | Drawing @n@ (from 1) of a layer, as wire JSON.
+drawingAt :: Int -> Int -> Project -> Either Text Value
+drawingAt li n p = case drop (n - 1) (celsOf li p) of
+    (c : _) | n >= 1 -> Right (celValue c)
+    _ -> Left ("expected a drawing from 1 to " <> tshow (length (celsOf li p)))
+
+onDrawing :: Int -> Int -> ([Item] -> [Item]) -> Project -> Either Text Project
+onDrawing li n f p
+    | n < 1 || n > length (celsOf li p) = Left ("expected a drawing from 1 to " <> tshow (length (celsOf li p)))
+    | otherwise = onLayerCels li (traverse step . zip [1 ..] . NonEmpty.toList) p
+    where
+        step (i, Cel h m xs)
+            | i == n = let ys = f xs in if length ys > maxItemsPerFrame then Left ("expected 0 to " <> tshow maxItemsPerFrame <> " items") else Right (Cel h m ys)
+            | otherwise = Right (Cel h m xs)
+
+-- | Items on top of drawing @n@ of a layer.
+addItemsAt :: Int -> Int -> [Item] -> Project -> Either Text Project
+addItemsAt li n new = onDrawing li n (<> new)
 
 -- | Drawing @n@'s items, all replaced.
-replaceItemsAt :: Int -> [Item] -> Project -> Either Text Project
-replaceItemsAt n new = onDrawing n (const (Right new))
+replaceItemsAt :: Int -> Int -> [Item] -> Project -> Either Text Project
+replaceItemsAt li n new = onDrawing li n (const new)
 
--- | A drawing after drawing @n@ (0 puts it first): blank, or a copy of drawing @n@.
-insertDrawing :: Int -> Bool -> Int -> Project -> Either Text Project
-insertDrawing after copy holdFor p
-    | after < 0 || after > length p.frames = Left ("expected a position from 0 to " <> tshow (length p.frames))
-    | length p.frames >= maxFrames = Left ("expected at most " <> tshow maxFrames <> " frames")
+-- | A drawing after drawing @after@ of a layer (0 puts it first): blank, or a copy of drawing @after@.
+insertDrawing :: Int -> Int -> Bool -> Int -> Project -> Either Text Project
+insertDrawing li after copy holdFor p
+    | after < 0 || after > length (celsOf li p) = Left ("expected a position from 0 to " <> tshow (length (celsOf li p)))
     | otherwise = do
         h <- holdFrom (Number (fromIntegral holdFor))
-        let
-            fs = NonEmpty.toList p.frames
-            source = if copy && after >= 1 then maybe [] (\(Frame _ xs) -> xs) (lookupAt (after - 1) fs) else []
-            (before, rest) = splitAt after fs
-        frames' <- nonEmpty "expected a frame" (before <> [Frame h source] <> rest)
-        pure p {frames = frames'}
+        onLayerCels
+            li
+            ( \cels ->
+                let
+                    cs = NonEmpty.toList cels
+                    source = case drop (after - 1) cs of
+                        (Cel _ m xs : _) | copy && after >= 1 -> Cel h m xs
+                        _ -> Cel h NoMark []
+                    (before, rest) = splitAt after cs
+                in
+                    Right (before <> [source] <> rest)
+            )
+            p
+
+-- | A new drawing layer on top; with @background@, at the bottom and held to the end.
+addLayer :: Text -> Bool -> Project -> Either Text Project
+addLayer raw background p = do
+    lbl <- labelFrom (String raw)
+    let
+        ids =
+            [ t
+            | l <- NonEmpty.toList p.layers
+            , let
+                LayerId t = (lookOf l).layerId
+            ]
+        fresh =
+            head'
+                [ c
+                | n <- [length ids + 1 ..]
+                , let
+                    c = "layer-" <> tshow (n :: Int)
+                , c `notElem` ids
+                ]
+        layer = DrawingLayer (LayerLook (LayerId fresh) lbl True False (Opacity 1)) background (NonEmpty.singleton (Cel (Hold 1) NoMark []))
+        ls = NonEmpty.toList p.layers
+        (refs, others) = break isDrawingLayer ls
+    layers' <- nonEmpty "expected a layer" (if background then refs <> [layer] <> others else ls <> [layer])
+    checked p {layers = layers'}
     where
-        lookupAt i xs = case drop i xs of
-            (x : _) -> Just x
-            [] -> Nothing
+        head' = \case
+            (x : _) -> x
+            [] -> "layer-new"
 
 -- Revisions -----------------------------------------------------------------------------
 
@@ -739,7 +1052,7 @@ data ProjectSummary = ProjectSummary
     deriving (FromJSON, ToJSON) via Parsed ProjectSummary
 
 summarize :: Revision -> Project -> ProjectSummary
-summarize r p = ProjectSummary {id = p.id, name = p.name, canvas = p.canvas, fps = p.fps, frameCount = length p.frames, revision = r}
+summarize r p = ProjectSummary {id = p.id, name = p.name, canvas = p.canvas, fps = p.fps, frameCount = duration p, revision = r}
 
 summaryId :: ProjectSummary -> ProjectId
 summaryId s = s.id

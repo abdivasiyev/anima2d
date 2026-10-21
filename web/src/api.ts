@@ -82,3 +82,12 @@ export const saveProject = async (p: Project, base: Revision): Promise<Reply<Pro
     (r) => parseProjectSummary(r.body),
   );
 };
+
+/** Upload a reference image or video, or an audio file; the server answers with its id. */
+export const uploadAsset = async (file: Blob): Promise<Reply<string>> =>
+  parsed(
+    await request("/api/assets", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }),
+    (r) => andThen(object(r.body), (o) => (typeof o.id === "string" ? ok(o.id) : err("the server sent no asset id"))),
+  );
+
+export const assetUrl = (id: string): string => `/api/assets/${encodeURIComponent(id)}`;

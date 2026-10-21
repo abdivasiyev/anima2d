@@ -16,6 +16,7 @@ import { andThen, at, each, err, map, ok, type Result } from "./result";
 import { array, bind, bounded, field, integer, number, object, parseWith, string } from "./wire";
 
 export const MAX_FRAMES = 10000;
+/** The longest timeline, in frames. */
 export const MAX_ITEMS_PER_FRAME = 5000;
 export const MAX_POINTS_PER_ITEM = 20000;
 export const MAX_POLYGONS_PER_FILL = 500;
@@ -88,10 +89,10 @@ export const parseCanvas = (raw: unknown): Result<Canvas> =>
 
 // Values items are made of --------------------------------------------------------------
 
-export const LAYERS = ["line", "color"] as const;
-/** Colour renders under line, always. */
-export type Layer = (typeof LAYERS)[number];
-export const parseLayer = oneOf(LAYERS, 'expected a layer of "line" or "color"');
+export const PLANES = ["line", "color"] as const;
+/** Which plane of a drawing an item is on: colour renders under line, always. (On the wire: "layer".) */
+export type Plane = (typeof PLANES)[number];
+export const parsePlane = oneOf(PLANES, 'expected a layer of "line" or "color"');
 
 export const BRUSHES = ["pen", "pencil", "marker", "paint"] as const;
 export type BrushKind = (typeof BRUSHES)[number];
@@ -200,7 +201,7 @@ const nonEmpty = <T>(xs: readonly T[]): NonEmpty<T> | undefined => {
 /** A freehand line: pen, pencil, marker, or the paint brush. */
 export interface StrokeFields {
   readonly kind: "stroke";
-  readonly layer: Layer;
+  readonly layer: Plane;
   readonly brush: BrushKind;
   readonly color: Color;
   readonly size: BrushSize;
@@ -218,7 +219,7 @@ export interface EraseFields {
 /** A path stamped along with grass, birds, stars and the like. */
 export interface ScatterFields {
   readonly kind: "scatter";
-  readonly layer: Layer;
+  readonly layer: Plane;
   readonly brush: ScatterKind;
   readonly color: Color;
   readonly size: BrushSize;
@@ -230,7 +231,7 @@ export interface ScatterFields {
 /** A line, rectangle, ellipse or triangle, by its centre, size and turn. */
 export interface ShapeFields {
   readonly kind: "shape";
-  readonly layer: Layer;
+  readonly layer: Plane;
   readonly shape: ShapeKind;
   readonly color: Color;
   readonly size: BrushSize;
@@ -245,7 +246,7 @@ export interface ShapeFields {
 /** A quadratic Bézier: start, control point, end. */
 export interface CurveFields {
   readonly kind: "curve";
-  readonly layer: Layer;
+  readonly layer: Plane;
   readonly color: Color;
   readonly size: BrushSize;
   readonly opacity: Opacity;
@@ -255,7 +256,7 @@ export interface CurveFields {
 /** A paint-bucket fill: one or more outlines, filled even-odd (so holes stay open). */
 export interface FillFields {
   readonly kind: "fill";
-  readonly layer: Layer;
+  readonly layer: Plane;
   readonly color: Color;
   readonly opacity: Opacity;
   readonly polygons: NonEmpty<NonEmpty<Vec>>;
@@ -333,7 +334,7 @@ export const parseItem = (raw: unknown): Result<Item> =>
       case "stroke":
         return makeItem({
           kind: "stroke",
-          layer: yield* field(o, "layer", parseLayer),
+          layer: yield* field(o, "layer", parsePlane),
           brush: yield* field(o, "brush", parseBrush),
           color: yield* field(o, "color", parseColor),
           size: yield* field(o, "size", parseBrushSize),
@@ -345,7 +346,7 @@ export const parseItem = (raw: unknown): Result<Item> =>
       case "scatter":
         return makeItem({
           kind: "scatter",
-          layer: yield* field(o, "layer", parseLayer),
+          layer: yield* field(o, "layer", parsePlane),
           brush: yield* field(o, "brush", parseScatter),
           color: yield* field(o, "color", parseColor),
           size: yield* field(o, "size", parseBrushSize),
@@ -356,7 +357,7 @@ export const parseItem = (raw: unknown): Result<Item> =>
       case "shape":
         return makeItem({
           kind: "shape",
-          layer: yield* field(o, "layer", parseLayer),
+          layer: yield* field(o, "layer", parsePlane),
           shape: yield* field(o, "shape", parseShape),
           color: yield* field(o, "color", parseColor),
           size: yield* field(o, "size", parseBrushSize),
@@ -370,7 +371,7 @@ export const parseItem = (raw: unknown): Result<Item> =>
       case "curve":
         return makeItem({
           kind: "curve",
-          layer: yield* field(o, "layer", parseLayer),
+          layer: yield* field(o, "layer", parsePlane),
           color: yield* field(o, "color", parseColor),
           size: yield* field(o, "size", parseBrushSize),
           opacity: yield* field(o, "opacity", parseOpacity),
@@ -379,7 +380,7 @@ export const parseItem = (raw: unknown): Result<Item> =>
       case "fill":
         return makeItem({
           kind: "fill",
-          layer: yield* field(o, "layer", parseLayer),
+          layer: yield* field(o, "layer", parsePlane),
           color: yield* field(o, "color", parseColor),
           opacity: yield* field(o, "opacity", parseOpacity),
           polygons: yield* field(o, "polygons", parsePolygons),
@@ -419,7 +420,7 @@ export const unparseItem = (item: Item): unknown => {
   }
 };
 
-// Frames --------------------------------------------------------------------------------
+// Cels ----------------------------------------------------------------------------------
 
 /** How many timeline frames one drawing is exposed for: 1 (on ones) to 24. */
 export type Hold = Brand<number, "Hold">;
@@ -427,46 +428,240 @@ export type Hold = Brand<number, "Hold">;
 export const parseHold = (raw: unknown): Result<Hold> =>
   andThen(integer(raw), (n) => (n >= 1 && n <= 24 ? ok(brandChecked<number, "Hold">(n)) : err("expected a hold from 1 to 24 frames")));
 
-export type Frame = Brand<{ readonly hold: Hold; readonly items: readonly Item[] }, "Frame">;
+export const MARKS = ["none", "key", "breakdown", "inbetween"] as const;
+/** The classic timing marks: keys, the breakdowns between them, and the inbetweens. */
+export type Mark = (typeof MARKS)[number];
+export const parseMark = oneOf(MARKS, 'expected a mark of "none", "key", "breakdown" or "inbetween"');
 
-export const makeFrame = (hold: Hold, items: readonly Item[]): Result<Frame> =>
-  items.length > MAX_ITEMS_PER_FRAME ? err(`expected 0 to ${MAX_ITEMS_PER_FRAME} items`) : ok(brandChecked({ hold, items }));
+/** One drawing on a layer's timeline, held for `hold` frames. */
+export type Cel = Brand<{ readonly hold: Hold; readonly mark: Mark; readonly items: readonly Item[] }, "Cel">;
 
-const parseFrameV2 = (raw: unknown): Result<Frame> =>
-  andThen(object(raw), (o) =>
-    andThen(at("hold", parseHold(o.hold)), (hold) =>
-      andThen(
-        at("items", andThen(andThen(array(o.items), (xs) => bounded("items", 0, MAX_ITEMS_PER_FRAME, xs)), (xs) => each(xs, parseItem))),
-        (items) => makeFrame(hold, items),
-      ),
-    ),
-  );
+export const makeCel = (hold: Hold, mark: Mark, items: readonly Item[]): Result<Cel> =>
+  items.length > MAX_ITEMS_PER_FRAME ? err(`expected 0 to ${MAX_ITEMS_PER_FRAME} items`) : ok(brandChecked({ hold, mark, items }));
+
+const parseItems = (key: string, parse: (raw: unknown) => Result<Item>) => (raw: unknown): Result<Item[]> =>
+  andThen(andThen(array(raw), (xs) => bounded(key, 0, MAX_ITEMS_PER_FRAME, xs)), (xs) => each(xs, parse));
+
+const parseCelV3 = (raw: unknown): Result<Cel> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const hold = yield* field(o, "hold", parseHold);
+    const mark = yield* field(o, "mark", parseMark);
+    const items = yield* field(o, "items", parseItems("items", parseItem));
+    return makeCel(hold, mark, items);
+  });
+
+const parseCelV2 = (raw: unknown): Result<Cel> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const hold = yield* field(o, "hold", parseHold);
+    const items = yield* field(o, "items", parseItems("items", parseItem));
+    return makeCel(hold, "none", items);
+  });
 
 /** A format 1 stroke: a pen line or an eraser path. */
 const parseStrokeV1 = (raw: unknown): Result<Item> =>
-  andThen(object(raw), (o) =>
-    andThen(at("tool", oneOf(["pen", "eraser"] as const, 'expected a tool of "pen" or "eraser"')(o.tool)), (tool) =>
-      andThen(at("color", parseColor(o.color)), (color) =>
-        andThen(at("size", parseBrushSize(o.size)), (size) =>
-          andThen(at("points", parsePoints(o.points)), (points) =>
-            tool === "eraser"
-              ? makeItem({ kind: "erase", size, points })
-              : makeItem({ kind: "stroke", layer: "line", brush: "pen", color, size, opacity: brandChecked<number, "Opacity">(1), points }),
-          ),
-        ),
-      ),
-    ),
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const tool = yield* field(o, "tool", oneOf(["pen", "eraser"] as const, 'expected a tool of "pen" or "eraser"'));
+    const color = yield* field(o, "color", parseColor);
+    const size = yield* field(o, "size", parseBrushSize);
+    const points = yield* field(o, "points", parsePoints);
+    return tool === "eraser"
+      ? makeItem({ kind: "erase", size, points })
+      : makeItem({ kind: "stroke", layer: "line", brush: "pen", color, size, opacity: brandChecked<number, "Opacity">(1), points });
+  });
+
+const parseCelV1 = (raw: unknown): Result<Cel> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const hold = yield* field(o, "hold", parseHold);
+    const items = yield* field(o, "strokes", parseItems("strokes", parseStrokeV1));
+    return makeCel(hold, "none", items);
+  });
+
+// Layers --------------------------------------------------------------------------------
+
+export const MAX_LAYERS = 20;
+
+/** A layer's id within its project: 1 to 32 of a–z, 0–9 and "-". */
+export type LayerId = Brand<string, "LayerId">;
+
+export const parseLayerId = (raw: unknown): Result<LayerId> =>
+  andThen(string(raw), (s) =>
+    s.length >= 1 && s.length <= 32 && /^[a-z0-9-]+$/.test(s) ? ok(brandChecked<string, "LayerId">(s)) : err("expected a layer id of 1 to 32 of a-z, 0-9 and '-'"),
   );
 
-const parseFrameV1 = (raw: unknown): Result<Frame> =>
-  andThen(object(raw), (o) =>
-    andThen(at("hold", parseHold(o.hold)), (hold) =>
-      andThen(
-        at("strokes", andThen(andThen(array(o.strokes), (xs) => bounded("strokes", 0, MAX_ITEMS_PER_FRAME, xs)), (xs) => each(xs, parseStrokeV1))),
-        (items) => makeFrame(hold, items),
-      ),
-    ),
+/** An uploaded file (reference image or video, audio): 1 to 64 of a–z, 0–9 and "-". */
+export type AssetId = Brand<string, "AssetId">;
+
+export const parseAssetId = (raw: unknown): Result<AssetId> =>
+  andThen(string(raw), (s) =>
+    s.length >= 1 && s.length <= 64 && /^[a-z0-9-]+$/.test(s) ? ok(brandChecked<string, "AssetId">(s)) : err("expected an asset id of 1 to 64 of a-z, 0-9 and '-'"),
   );
+
+/** A layer's or track's name: 1 to 40 characters, trimmed, no control characters. */
+export type LabelName = Brand<string, "LabelName">;
+
+export const parseLabel = (raw: unknown): Result<LabelName> =>
+  andThen(string(raw), (s) => {
+    const t = s.trim();
+    if (t.length < 1 || t.length > 40) return err("expected a name of 1 to 40 characters");
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(t)) return err("expected a name without control characters");
+    return ok(brandChecked<string, "LabelName">(t));
+  });
+
+export const MEDIA = ["image", "video"] as const;
+export type Media = (typeof MEDIA)[number];
+export const parseMedia = oneOf(MEDIA, 'expected media of "image" or "video"');
+
+const parseBool = (raw: unknown): Result<boolean> => (typeof raw === "boolean" ? ok(raw) : err("expected true or false"));
+
+/** Drawings on a timeline. `holdLast` keeps the last one showing to the end (backgrounds). */
+export interface DrawingLayerFields {
+  readonly kind: "drawing";
+  readonly id: LayerId;
+  readonly name: LabelName;
+  readonly visible: boolean;
+  readonly locked: boolean;
+  readonly opacity: Opacity;
+  readonly holdLast: boolean;
+  readonly cels: NonEmpty<Cel>;
+}
+
+/** An image or video to trace over; shown in the editor, never exported. */
+export interface ReferenceLayerFields {
+  readonly kind: "reference";
+  readonly id: LayerId;
+  readonly name: LabelName;
+  readonly visible: boolean;
+  readonly locked: boolean;
+  readonly opacity: Opacity;
+  readonly asset: AssetId;
+  readonly media: Media;
+}
+
+export type LayerFields = DrawingLayerFields | ReferenceLayerFields;
+export type Layer = Brand<LayerFields, "Layer">;
+export type DrawingLayer = Brand<DrawingLayerFields, "Layer">;
+
+export const makeLayer = (fields: LayerFields): Result<Layer> =>
+  fields.kind === "drawing" && fields.cels.length > MAX_FRAMES ? err(`expected 1 to ${MAX_FRAMES} cels`) : ok(brandChecked<LayerFields, "Layer">(fields));
+
+export const isDrawing = (l: Layer): l is DrawingLayer => l.kind === "drawing";
+
+/** A layer's cels; formats 1 and 2 called them frames, and their messages still do. */
+const parseCels = (parseCel: (raw: unknown) => Result<Cel>, what = "cels") => (raw: unknown): Result<NonEmpty<Cel>> =>
+  andThen(andThen(andThen(array(raw), (xs) => bounded(what, 1, MAX_FRAMES, xs)), (xs) => each(xs, parseCel)), (cs) => {
+    const ne = nonEmpty(cs);
+    return ne === undefined ? err(`expected 1 to ${MAX_FRAMES} ${what}`) : ok(ne);
+  });
+
+export const parseLayer = (raw: unknown): Result<Layer> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const kind = yield* field(o, "kind", oneOf(["drawing", "reference"] as const, 'expected a layer kind of "drawing" or "reference"'));
+    const id = yield* field(o, "id", parseLayerId);
+    const name = yield* field(o, "name", parseLabel);
+    const visible = yield* field(o, "visible", parseBool);
+    const locked = yield* field(o, "locked", parseBool);
+    const opacity = yield* field(o, "opacity", parseOpacity);
+    if (kind === "drawing") {
+      const holdLast = yield* field(o, "holdLast", parseBool);
+      const cels = yield* field(o, "cels", parseCels(parseCelV3));
+      return makeLayer({ kind, id, name, visible, locked, opacity, holdLast, cels });
+    }
+    const asset = yield* field(o, "asset", parseAssetId);
+    const media = yield* field(o, "media", parseMedia);
+    return makeLayer({ kind, id, name, visible, locked, opacity, asset, media });
+  });
+
+const unparseLayer = (l: Layer): unknown =>
+  l.kind === "drawing"
+    ? {
+        kind: l.kind,
+        id: l.id,
+        name: l.name,
+        visible: l.visible,
+        locked: l.locked,
+        opacity: l.opacity,
+        holdLast: l.holdLast,
+        cels: l.cels.map((c) => ({ hold: c.hold, mark: c.mark, items: c.items.map(unparseItem) })),
+      }
+    : { kind: l.kind, id: l.id, name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, asset: l.asset, media: l.media };
+
+// Camera --------------------------------------------------------------------------------
+
+export const MAX_CAMERA_KEYS = 1000;
+export const MAX_TIMELINE_FRAME = 99999;
+
+export const EASES = ["linear", "in", "out", "inOut"] as const;
+export type Ease = (typeof EASES)[number];
+export const parseEase = oneOf(EASES, 'expected an ease of "linear", "in", "out" or "inOut"');
+
+/** A frame on the timeline, from 0. */
+export type FrameIndex = Brand<number, "FrameIndex">;
+
+export const parseFrameIndex = (raw: unknown): Result<FrameIndex> =>
+  andThen(integer(raw), (n) => (n >= 0 && n <= MAX_TIMELINE_FRAME ? ok(brandChecked<number, "FrameIndex">(n)) : err(`expected a frame from 0 to ${MAX_TIMELINE_FRAME}`)));
+
+/** How far the camera is zoomed in: 0.1 to 10. */
+export type Zoom = Brand<number, "Zoom">;
+
+export const parseZoom = (raw: unknown): Result<Zoom> =>
+  andThen(number(raw), (n) => (n >= 0.1 && n <= 10 ? ok(brandChecked<number, "Zoom">(n)) : err("expected a zoom from 0.1 to 10")));
+
+/** Where the camera looks at a frame: its centre on the canvas, zoom and turn, and how it eases into the next key. */
+export type CameraKey = Brand<{ readonly frame: FrameIndex; readonly center: Vec; readonly zoom: Zoom; readonly rotation: Angle; readonly ease: Ease }, "CameraKey">;
+
+export const parseCameraKey = (raw: unknown): Result<CameraKey> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const frame = yield* field(o, "frame", parseFrameIndex);
+    const center = yield* field(o, "center", parseVec);
+    const zoom = yield* field(o, "zoom", parseZoom);
+    const rotation = yield* field(o, "rotation", parseAngle);
+    const ease = yield* field(o, "ease", parseEase);
+    return ok(brandChecked({ frame, center, zoom, rotation, ease }));
+  });
+
+export const makeCameraKey = (frame: FrameIndex, center: Vec, zoom: Zoom, rotation: Angle, ease: Ease): CameraKey => brandChecked({ frame, center, zoom, rotation, ease });
+
+// Audio ---------------------------------------------------------------------------------
+
+export const MAX_AUDIO_TRACKS = 8;
+
+/** Frames an audio track starts after (or, negative, before) the first frame. */
+export type Offset = Brand<number, "Offset">;
+
+export const parseOffset = (raw: unknown): Result<Offset> =>
+  andThen(integer(raw), (n) => (Math.abs(n) <= MAX_TIMELINE_FRAME ? ok(brandChecked<number, "Offset">(n)) : err(`expected an offset within ${MAX_TIMELINE_FRAME} frames`)));
+
+export type Volume = Brand<number, "Volume">;
+
+export const parseVolume = (raw: unknown): Result<Volume> =>
+  andThen(number(raw), (n) => (n >= 0 && n <= 1 ? ok(brandChecked<number, "Volume">(n)) : err("expected a volume from 0 to 1")));
+
+export type AudioTrack = Brand<
+  { readonly id: LayerId; readonly asset: AssetId; readonly name: LabelName; readonly offset: Offset; readonly volume: Volume; readonly muted: boolean },
+  "AudioTrack"
+>;
+
+export const parseAudioTrack = (raw: unknown): Result<AudioTrack> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const id = yield* field(o, "id", parseLayerId);
+    const asset = yield* field(o, "asset", parseAssetId);
+    const name = yield* field(o, "name", parseLabel);
+    const offset = yield* field(o, "offset", parseOffset);
+    const volume = yield* field(o, "volume", parseVolume);
+    const muted = yield* field(o, "muted", parseBool);
+    return ok(brandChecked({ id, asset, name, offset, volume, muted }));
+  });
+
+export const makeAudioTrack = (id: LayerId, asset: AssetId, name: LabelName, offset: Offset, volume: Volume, muted: boolean): AudioTrack =>
+  brandChecked({ id, asset, name, offset, volume, muted });
 
 // Project -------------------------------------------------------------------------------
 
@@ -476,45 +671,97 @@ export type Project = Brand<
     readonly name: ProjectName;
     readonly canvas: Canvas;
     readonly fps: Fps;
-    readonly frames: NonEmpty<Frame>;
+    /** Bottom to top. */
+    readonly layers: NonEmpty<Layer>;
+    /** In frame order, one key per frame at most. */
+    readonly camera: readonly CameraKey[];
+    readonly audio: readonly AudioTrack[];
   },
   "Project"
 >;
 
-/** Build a project from values already parsed; only the frame count is left to check. */
-export const makeProject = (id: ProjectId, name: ProjectName, canvas: Canvas, fps: Fps, frames: readonly Frame[]): Result<Project> => {
-  const ne = nonEmpty(frames);
-  if (ne === undefined || frames.length > MAX_FRAMES) return err(`expected 1 to ${MAX_FRAMES} frames`);
-  return ok(brandChecked({ id, name, canvas, fps, frames: ne }));
+/** Build a project from values already parsed; what is left are the cross-field rules. */
+export const makeProject = (
+  id: ProjectId,
+  name: ProjectName,
+  canvas: Canvas,
+  fps: Fps,
+  layers: readonly Layer[],
+  camera: readonly CameraKey[] = [],
+  audio: readonly AudioTrack[] = [],
+): Result<Project> => {
+  const ne = nonEmpty(layers);
+  if (ne === undefined || layers.length > MAX_LAYERS) return err(`layers: expected 1 to ${MAX_LAYERS} layers`);
+  if (!layers.some((l) => l.kind === "drawing")) return err("layers: expected at least one drawing layer");
+  if (new Set(layers.map((l) => l.id)).size !== layers.length) return err("layers: expected every layer id to be different");
+  if (camera.length > MAX_CAMERA_KEYS) return err(`camera: expected 0 to ${MAX_CAMERA_KEYS} keys`);
+  if (camera.some((k, i) => i > 0 && k.frame <= (camera[i - 1]?.frame ?? -1))) return err("camera: expected keys in frame order, one per frame");
+  if (audio.length > MAX_AUDIO_TRACKS) return err(`audio: expected 0 to ${MAX_AUDIO_TRACKS} tracks`);
+  if (new Set(audio.map((a) => a.id)).size !== audio.length) return err("audio: expected every track id to be different");
+  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio }));
+};
+
+const firstLayer = (cels: NonEmpty<Cel>): Result<Layer> => {
+  const id = parseLayerId("layer-1");
+  const name = parseLabel("Layer 1");
+  if (!id.ok) return id;
+  if (!name.ok) return name;
+  return makeLayer({ kind: "drawing", id: id.value, name: name.value, visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), holdLast: false, cels });
 };
 
 export const parseProject = (raw: unknown): Result<Project> =>
-  andThen(object(raw), (o) => {
-    const parseFrame = o.format === 1 ? parseFrameV1 : o.format === 2 ? parseFrameV2 : undefined;
-    if (parseFrame === undefined) return err("format: expected project format 1 or 2");
-    return andThen(at("id", parseProjectId(o.id)), (id) =>
-      andThen(at("name", parseProjectName(o.name)), (name) =>
-        andThen(at("canvas", parseCanvas(o.canvas)), (canvas) =>
-          andThen(at("fps", parseFps(o.fps)), (fps) =>
-            andThen(
-              at("frames", andThen(andThen(array(o.frames), (xs) => bounded("frames", 1, MAX_FRAMES, xs)), (xs) => each(xs, parseFrame))),
-              (frames) => at("frames", makeProject(id, name, canvas, fps, frames)),
-            ),
-          ),
-        ),
-      ),
-    );
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const format = o.format;
+    if (format !== 1 && format !== 2 && format !== 3) return err("format: expected project format 1, 2 or 3");
+    const id = yield* field(o, "id", parseProjectId);
+    const name = yield* field(o, "name", parseProjectName);
+    const canvas = yield* field(o, "canvas", parseCanvas);
+    const fps = yield* field(o, "fps", parseFps);
+    if (format !== 3) {
+      // Formats 1 and 2: one list of drawings, which becomes the first layer.
+      const cels = yield* field(o, "frames", parseCels(format === 1 ? parseCelV1 : parseCelV2, "frames"));
+      const layer = yield* bind(firstLayer(cels));
+      return makeProject(id, name, canvas, fps, [layer]);
+    }
+    const layers = yield* field(o, "layers", (v) => andThen(andThen(array(v), (xs) => bounded("layers", 1, MAX_LAYERS, xs)), (xs) => each(xs, parseLayer)));
+    const camera = yield* field(o, "camera", (v) => andThen(andThen(array(v), (xs) => bounded("keys", 0, MAX_CAMERA_KEYS, xs)), (xs) => each(xs, parseCameraKey)));
+    const audio = yield* field(o, "audio", (v) => andThen(andThen(array(v), (xs) => bounded("tracks", 0, MAX_AUDIO_TRACKS, xs)), (xs) => each(xs, parseAudioTrack)));
+    return makeProject(id, name, canvas, fps, layers, camera, audio);
   });
 
-/** The wire shape the server parses; always format 2. */
+/** The wire shape the server parses; always format 3. */
 export const unparseProject = (p: Project): unknown => ({
-  format: 2,
+  format: 3,
   id: p.id,
   name: p.name,
   canvas: { width: p.canvas.width, height: p.canvas.height },
   fps: p.fps,
-  frames: p.frames.map((f) => ({ hold: f.hold, items: f.items.map(unparseItem) })),
+  layers: p.layers.map(unparseLayer),
+  camera: p.camera.map((k) => ({ frame: k.frame, center: [k.center[0], k.center[1]], zoom: k.zoom, rotation: k.rotation, ease: k.ease })),
+  audio: p.audio.map((a) => ({ id: a.id, asset: a.asset, name: a.name, offset: a.offset, volume: a.volume, muted: a.muted })),
 });
+
+// Time ----------------------------------------------------------------------------------
+
+/** A drawing layer's length in frames, counting each cel's hold. */
+export const layerLength = (l: DrawingLayer): number => l.cels.reduce((n, c) => n + c.hold, 0);
+
+/** The timeline's length: its longest drawing layer. */
+export const duration = (p: Project): number => Math.max(1, ...p.layers.filter(isDrawing).map(layerLength));
+
+/** The frame cel `i` starts on. */
+export const celStart = (l: DrawingLayer, i: number): number => l.cels.slice(0, i).reduce((n, c) => n + c.hold, 0);
+
+/** The cel showing at frame `t`, if any: past its end a layer shows nothing, unless it holds its last cel. */
+export const celAt = (l: DrawingLayer, t: number): number | undefined => {
+  let acc = 0;
+  for (const [i, c] of l.cels.entries()) {
+    acc += c.hold;
+    if (t < acc) return i;
+  }
+  return l.holdLast ? l.cels.length - 1 : undefined;
+};
 
 /** How many times the server has saved a project; a save names the one it started from. */
 export type Revision = Brand<number, "Revision">;
@@ -551,9 +798,6 @@ export const parseProjectSummary = (raw: unknown): Result<ProjectSummary> =>
 
 /** A summary for a project the server has not seen yet (made offline). */
 export const localSummary = (p: Project): ProjectSummary =>
-  brandChecked({ id: p.id, name: p.name, canvas: p.canvas, fps: p.fps, frameCount: p.frames.length, revision: brandChecked<number, "Revision">(0) });
+  brandChecked({ id: p.id, name: p.name, canvas: p.canvas, fps: p.fps, frameCount: duration(p), revision: brandChecked<number, "Revision">(0) });
 
 export const parseSummaries = (raw: unknown): Result<ProjectSummary[]> => andThen(array(raw), (xs) => each(xs, parseProjectSummary));
-
-/** Timeline length in frames, counting each drawing's hold. */
-export const duration = (p: Project): number => p.frames.reduce((n, f) => n + f.hold, 0);

@@ -2,7 +2,7 @@
  {
   "name": "unknown format",
   "input": {
-   "format": 3,
+   "format": 9,
    "id": "fixture-v2",
    "name": "Every item",
    "canvas": {
@@ -178,7 +178,7 @@
     }
    ]
   },
-  "error": "format: expected project format 1 or 2"
+  "error": "format: expected project format 1, 2 or 3"
  },
  {
   "name": "odd width",
@@ -904,5 +904,1450 @@
    ]
   },
   "error": "frames: 0: strokes: 0: tool: expected a tool of \"pen\" or \"eraser\""
+ },
+ {
+  "name": "v3 unknown layer kind",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "sound",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 1: kind: expected a layer kind of \"drawing\" or \"reference\""
+ },
+ {
+  "name": "v3 layer id with spaces",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "my layer",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 2: id: expected a layer id of 1 to 32 of a-z, 0-9 and '-'"
+ },
+ {
+  "name": "v3 two layers share an id",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: expected every layer id to be different"
+ },
+ {
+  "name": "v3 only a reference layer",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: expected at least one drawing layer"
+ },
+ {
+  "name": "v3 drawing layer without cels",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": []
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 1: cels: expected 1 to 10000 cels"
+ },
+ {
+  "name": "v3 unknown mark",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "pose",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 2: cels: 0: mark: expected a mark of \"none\", \"key\", \"breakdown\" or \"inbetween\""
+ },
+ {
+  "name": "v3 camera keys out of order",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    },
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "camera: expected keys in frame order, one per frame"
+ },
+ {
+  "name": "v3 camera zoom too far",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 20,
+     "rotation": 0,
+     "ease": "inOut"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "camera: 0: zoom: expected a zoom from 0.1 to 10"
+ },
+ {
+  "name": "v3 unknown ease",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "bounce"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "camera: 0: ease: expected an ease of \"linear\", \"in\", \"out\" or \"inOut\""
+ },
+ {
+  "name": "v3 audio too loud",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 2,
+     "muted": false
+    }
+   ]
+  },
+  "error": "audio: 0: volume: expected a volume from 0 to 1"
+ },
+ {
+  "name": "v3 reference with unknown media",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3",
+   "name": "Layers and camera",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "pdf"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ]
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut"
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ]
+  },
+  "error": "layers: 0: media: expected media of \"image\" or \"video\""
  }
 ]

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addItems, newProject } from "../domain/edit";
+import { addItems, newProject, setItems } from "../domain/edit";
 import { parseCanvas, parseItem, parseProjectId, parseProjectName, type Item, type Project } from "../domain/project";
 import { unwrap, type Result } from "../domain/result";
 import { parseSettings } from "../domain/settings";
@@ -15,7 +15,12 @@ const farStroke = unwrap(
 
 const withItems = (items: readonly Item[]): Project => {
   const blank = newProject(unwrap(parseProjectId("p")), unwrap(parseProjectName("Test")), unwrap(parseCanvas({ width: 1920, height: 1080 })), 24);
-  return unwrap(addItems(blank, 0, items));
+  return unwrap(addItems(blank, { layer: 0, cel: 0 }, items));
+};
+
+const itemsOf = (p: Project): readonly Item[] => {
+  const l = p.layers[0];
+  return l.kind === "drawing" ? l.cels[0].items : [];
 };
 
 /** A host with no screen: edits land in `state`, previews and guides are ignored. */
@@ -26,7 +31,9 @@ const fakeHost = (start: Project): ToolHost & { state: { project: Project; selec
     width: 1920,
     height: 1080,
     project: () => state.project,
-    index: () => 0,
+    items: () => itemsOf(state.project),
+    addItems: (xs) => addItems(state.project, { layer: 0, cel: 0 }, xs),
+    replaceItems: (xs) => setItems(state.project, { layer: 0, cel: 0 }, xs),
     settings: () => parseSettings({ tool: "select" }),
     edit: (r: Result<Project>) => {
       if (r.ok) state.project = r.value;
@@ -68,7 +75,7 @@ describe("SelectTool", () => {
     tool.down({ x: 700, y: 300, pressure: 0.5 });
     tool.move({ x: 750, y: 340, pressure: 0.5 });
     tool.up({ x: 750, y: 340, pressure: 0.5 });
-    const moved = host.state.project.frames[0].items[0];
+    const moved = itemsOf(host.state.project)[0];
     expect(moved?.kind === "shape" && [moved.center[0], moved.center[1]]).toEqual([650, 340]);
   });
 
@@ -77,7 +84,7 @@ describe("SelectTool", () => {
     const tool = new SelectTool(host);
     tool.selectAll();
     tool.duplicate();
-    expect(host.state.project.frames[0].items.length).toBe(2);
+    expect(itemsOf(host.state.project).length).toBe(2);
     expect(tool.count).toBe(1);
   });
 });
@@ -88,7 +95,7 @@ describe("ObjectEraserTool", () => {
     const tool = new ObjectEraserTool(host);
     tool.down({ x: 700, y: 300, pressure: 1 });
     tool.up();
-    expect(host.state.project.frames[0].items).toEqual([farStroke]);
+    expect(itemsOf(host.state.project)).toEqual([farStroke]);
   });
 });
 

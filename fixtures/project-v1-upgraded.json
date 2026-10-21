@@ -1,5 +1,5 @@
 {
- "format": 2,
+ "format": 3,
  "id": "fixture-v1",
  "name": "Old project",
  "canvas": {
@@ -7,46 +7,61 @@
   "height": 1080
  },
  "fps": 24,
- "frames": [
+ "layers": [
   {
-   "hold": 2,
-   "items": [
+   "kind": "drawing",
+   "id": "layer-1",
+   "name": "Layer 1",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "holdLast": false,
+   "cels": [
     {
-     "kind": "stroke",
-     "layer": "line",
-     "brush": "pen",
-     "color": "#1c1c1e",
-     "size": 6,
-     "opacity": 1,
-     "points": [
-      [
-       10,
-       20,
-       0.5
-      ],
-      [
-       30,
-       40,
-       0.75
-      ]
+     "hold": 2,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#1c1c1e",
+       "size": 6,
+       "opacity": 1,
+       "points": [
+        [
+         10,
+         20,
+         0.5
+        ],
+        [
+         30,
+         40,
+         0.75
+        ]
+       ]
+      },
+      {
+       "kind": "erase",
+       "size": 12,
+       "points": [
+        [
+         15,
+         25,
+         1
+        ]
+       ]
+      }
      ]
     },
     {
-     "kind": "erase",
-     "size": 12,
-     "points": [
-      [
-       15,
-       25,
-       1
-      ]
-     ]
+     "hold": 1,
+     "mark": "none",
+     "items": []
     }
    ]
-  },
-  {
-   "hold": 1,
-   "items": []
   }
- ]
+ ],
+ "camera": [],
+ "audio": []
 }

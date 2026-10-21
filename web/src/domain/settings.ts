@@ -46,6 +46,15 @@ export const parseEraserMode = oneOf(ERASERS, 'expected an eraser mode of "pixel
 export const parseShapeTool = oneOf(SHAPE_TOOLS, "expected a known shape");
 export const parseGap = oneOf(GAPS, "expected a gap of 0, 4, 10 or 20");
 
+export const ONION_MODES = ["tint", "original"] as const;
+export type OnionMode = (typeof ONION_MODES)[number];
+export const parseOnionMode = oneOf(ONION_MODES, 'expected an onion mode of "tint" or "original"');
+
+/** Playback speed, for checking timing slowly. */
+export const SPEEDS = [0.25, 0.5, 1, 2] as const;
+export type Speed = (typeof SPEEDS)[number];
+export const parseSpeed = oneOf(SPEEDS, "expected a speed of 0.25, 0.5, 1 or 2");
+
 /** How hard the line is pulled back toward its smoothed path: 0 (off) to 0.95. */
 export type Stabilizer = Brand<number, "Stabilizer">;
 
@@ -80,6 +89,15 @@ export interface SettingsFields {
   readonly onion: boolean;
   readonly onionBefore: OnionRange;
   readonly onionAfter: OnionRange;
+  /** Onion skins in red/green, or in their own colours. */
+  readonly onionMode: OnionMode;
+  /** Only key drawings in the onion skin. */
+  readonly onionKeys: boolean;
+  readonly speed: Speed;
+  /** Play forward then back instead of looping. */
+  readonly pingPong: boolean;
+  /** Play through the camera. */
+  readonly cameraView: boolean;
 }
 
 export type Settings = Brand<SettingsFields, "Settings">;
@@ -103,6 +121,11 @@ const DEFAULTS = {
   onion: true,
   onionBefore: 2,
   onionAfter: 1,
+  onionMode: "tint",
+  onionKeys: false,
+  speed: 1,
+  pingPong: false,
+  cameraView: true,
 } as const;
 
 /** Each field from `raw` if it parses, else its default: settings never fail to load. */
@@ -134,6 +157,11 @@ export const parseSettings = (raw: unknown): Settings => {
     onion: get("onion", parseBool),
     onionBefore: get("onionBefore", parseOnionRange),
     onionAfter: get("onionAfter", parseOnionRange),
+    onionMode: get("onionMode", parseOnionMode),
+    onionKeys: get("onionKeys", parseBool),
+    speed: get("speed", parseSpeed),
+    pingPong: get("pingPong", parseBool),
+    cameraView: get("cameraView", parseBool),
   });
 };
 

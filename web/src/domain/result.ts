@@ -18,10 +18,10 @@ export const andThen = <A, B>(r: Result<A>, f: (a: A) => Result<B>): Result<B> =
 export const at = <T>(where: string, r: Result<T>): Result<T> => (r.ok ? r : err(`${where}: ${r.error}`));
 
 /** Parse every element, naming the index of the first that fails. */
-export const each = <A, B>(xs: readonly A[], f: (a: A) => Result<B>): Result<B[]> => {
+export const each = <A, B>(xs: readonly A[], f: (a: A, i: number) => Result<B>): Result<B[]> => {
   const out: B[] = [];
   for (const [i, x] of xs.entries()) {
-    const r = at(String(i), f(x));
+    const r = at(String(i), f(x, i));
     if (!r.ok) return r;
     out.push(r.value);
   }

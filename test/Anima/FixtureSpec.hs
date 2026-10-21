@@ -22,11 +22,15 @@ spec = describe "shared fixtures" $ do
     v1 <- runIO (load "project-v1.json")
     v1Upgraded <- runIO (load "project-v1-upgraded.json")
     v2 <- runIO (load "project-v2.json")
+    v2Upgraded <- runIO (load "project-v2-upgraded.json")
+    v3 <- runIO (load "project-v3.json")
     rejections <- runIO (load "rejections.json")
 
-    it "a format 2 project with every kind of item round-trips"
-        $ (unparse <$> parse @Project v2) `shouldBe` Right v2
-    it "a format 1 project upgrades to format 2"
+    it "a format 3 project with layers, a camera and audio round-trips"
+        $ (unparse <$> parse @Project v3) `shouldBe` Right v3
+    it "a format 2 project with every kind of item upgrades to format 3"
+        $ (unparse <$> parse @Project v2) `shouldBe` Right v2Upgraded
+    it "a format 1 project upgrades to format 3"
         $ (unparse <$> parse @Project v1) `shouldBe` Right v1Upgraded
 
     case rejections of

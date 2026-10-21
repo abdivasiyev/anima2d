@@ -1110,3 +1110,305 @@ dialog::backdrop {
   margin-bottom: 12px;
   color: var(--text-2);
 }
+
+/* Multi-layer timeline ----------------------------------------------------------------- */
+
+.tl {
+  position: relative;
+  max-height: 34vh;
+  overflow: hidden;
+}
+
+.tl-body {
+  max-height: 34vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 6px;
+}
+
+.tl-ruler-row,
+.tl-row {
+  display: flex;
+  min-width: max-content;
+}
+
+.tl-ruler-row {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.tl-corner,
+.tl-head {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  width: 148px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.ruler {
+  display: block;
+  height: 24px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.tl-row {
+  height: 46px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tl-row.slim {
+  height: 34px;
+}
+
+.tl-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.tl-head[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.tl-toggle {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.tl-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.tl-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tl-toggle[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.tl-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tl-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl-name svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+}
+
+.tl-name:hover {
+  background: var(--hover);
+}
+
+.tl-more {
+  width: 24px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.tl-more:hover {
+  background: var(--hover);
+}
+
+.tl-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.tl-label svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tl-lane {
+  position: relative;
+  flex: none;
+  height: 100%;
+}
+
+.cel {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  cursor: pointer;
+}
+
+.cel.empty {
+  background: var(--surface-2);
+}
+
+.cel canvas {
+  display: block;
+  pointer-events: none;
+}
+
+.cel[aria-selected="true"] {
+  box-shadow: inset 0 0 0 2px var(--accent-soft), inset 0 0 0 1px var(--accent);
+}
+
+.cel[aria-current="true"] {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Timing marks along the top edge: keys solid, breakdowns amber, inbetweens faint. */
+.cel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+}
+
+.cel.mark-key::before {
+  background: var(--accent);
+}
+
+.cel.mark-breakdown::before {
+  background: #d9a21b;
+}
+
+.cel.mark-inbetween::before {
+  background: var(--border-strong);
+}
+
+.cel .pin {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: rotate(45deg);
+}
+
+.hold-tail {
+  position: absolute;
+  top: 50%;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, var(--border-strong) 0 6px, transparent 6px 10px);
+  pointer-events: none;
+}
+
+.ref-band {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.cam-key {
+  position: absolute;
+  top: 11px;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--danger);
+  transform: rotate(45deg);
+  cursor: pointer;
+}
+
+.wave {
+  position: absolute;
+  top: 3px;
+  height: 28px;
+  pointer-events: none;
+}
+
+.timecode {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.pop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.popover .select {
+  height: 32px;
+  font-size: 12px;
+}
+
+.stage .output {
+  background: #fff;
+}
+
+.workspace.locked {
+  cursor: not-allowed;
+}

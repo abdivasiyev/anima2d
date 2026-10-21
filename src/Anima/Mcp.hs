@@ -38,17 +38,21 @@ import Anima.Types.Project
     ( Item
     , ProjectSummary
     , addItemsAt
+    , addLayer
     , canvasFrom
     , drawingAt
+    , duration
     , fpsFrom
     , insertDrawing
+    , layersSummary
     , newProject
+    , pickLayer
     , replaceItemsAt
     )
 
 -- | The tools that change a project; the server lists the same names for read-only agents.
 writeTools :: [Text]
-writeTools = ["create_project", "add_items", "replace_items", "add_drawing"]
+writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer"]
 
 mcpApp :: ProjectStore -> IO Text -> Wai.Application
 mcpApp store newId req respond
@@ -104,10 +108,12 @@ handle store newId method params = case method of
 
 instructions :: Text
 instructions =
-    "anima2D: 2D frame-by-frame animation. A project is a canvas, a frame rate and a list of drawings; \
-    \each drawing is held for some frames and holds items drawn in order. Call item_format first for \
-    \the exact JSON of strokes, shapes, curves, fills and scatter brushes. Coordinates are canvas pixels \
-    \from the top-left. Drawings are numbered from 1."
+    "anima2D: 2D frame-by-frame animation. A project is a canvas, a frame rate and layers stacked bottom \
+    \to top; a drawing layer is a run of drawings, each held for some frames and holding items drawn in \
+    \order. A background layer holds its one drawing to the end. Call get_project for the layers and \
+    \item_format for the exact JSON of strokes, shapes, curves, fills and scatter brushes. Coordinates \
+    \are canvas pixels from the top-left. Drawings are numbered from 1; leave out `layer` to use the \
+    \topmost drawing layer."
 
 -- Tools -----------------------------------------------------------------------------------
 
@@ -123,21 +129,28 @@ tools =
         , ("fps", int "Frame rate: 12, 24, 25, 30, 48, 50 or 60")
         ]
         ["name", "width", "height", "fps"]
-    , tool "get_drawing" "One drawing's hold and items, as JSON." [("project_id", str "From list_projects"), ("drawing", int "Drawing number, from 1")] ["project_id", "drawing"]
+    , tool "get_project" "A project's canvas, frame rate, length and layers (ids, names, number of drawings)." [("project_id", str "From list_projects")] ["project_id"]
+    , tool
+        "add_layer"
+        "Add a drawing layer on top, or with background=true a layer at the bottom whose one drawing is held to the end."
+        [("project_id", str "From list_projects"), ("name", str "1 to 40 characters"), ("background", bool "A background layer (default false)")]
+        ["project_id", "name"]
+    , tool "get_drawing" "One drawing's hold, mark and items, as JSON." [("project_id", str "From list_projects"), ("layer", str layerHelp), ("drawing", int "Drawing number, from 1")] ["project_id", "drawing"]
     , tool
         "add_items"
         "Draw items on top of a drawing. See item_format for the item JSON. All items are checked first; on any rejection nothing is added."
-        [("project_id", str "From list_projects"), ("drawing", int "Drawing number, from 1"), ("items", arr "Items, in drawing order")]
+        [("project_id", str "From list_projects"), ("layer", str layerHelp), ("drawing", int "Drawing number, from 1"), ("items", arr "Items, in drawing order")]
         ["project_id", "drawing", "items"]
     , tool
         "replace_items"
         "Replace every item of a drawing (an empty list clears it)."
-        [("project_id", str "From list_projects"), ("drawing", int "Drawing number, from 1"), ("items", arr "Items, in drawing order")]
+        [("project_id", str "From list_projects"), ("layer", str layerHelp), ("drawing", int "Drawing number, from 1"), ("items", arr "Items, in drawing order")]
         ["project_id", "drawing", "items"]
     , tool
         "add_drawing"
         "Insert a drawing after drawing `after` (0 puts it first): blank, or a copy of drawing `after` to change for the next pose."
         [ ("project_id", str "From list_projects")
+        , ("layer", str layerHelp)
         , ("after", int "Insert after this drawing; 0 for the start")
         , ("copy", bool "Start from a copy of drawing `after`")
         , ("hold", int "Frames to hold it for, 1 to 24 (default 1)")
@@ -146,6 +159,7 @@ tools =
     , tool "item_format" "The JSON for every kind of item, with examples. Read this before drawing." [] []
     ]
     where
+        layerHelp = "Layer id from get_project; leave out for the topmost drawing layer"
         tool :: Text -> Text -> [(Text, Value)] -> [Text] -> Value
         tool n d props req =
             object
@@ -188,20 +202,32 @@ callTool :: ProjectStore -> IO Text -> Text -> Value -> IO Value
 callTool store newId name args = case name of
     "list_projects" -> either storeFailure (ok . fmap summaryJson) <$> store.list
     "item_format" -> pure (textResult False itemFormat)
+    "get_project" -> withArgs $ \o -> do
+        pid <- arg o "project_id" (asText >=>. parse)
+        pure $ do
+            loaded <- store.load pid
+            pure $ either storeFailure (\(p, rev) -> ok (object ["summary" .= summaryJson rev, "frames" .= duration p, "layers" .= layersSummary p])) loaded
+    "add_layer" -> withArgs $ \o -> do
+        pid <- arg o "project_id" (asText >=>. parse)
+        nm <- arg o "name" asText
+        bg <- optional o "background" asBool False
+        pure (saved <$> modifyProject store pid (addLayer nm bg))
     "get_drawing" -> withArgs $ \o -> do
         pid <- arg o "project_id" (asText >=>. parse)
+        want <- optional o "layer" (fmap Just . asText) Nothing
         n <- arg o "drawing" asInt
         pure $ do
             loaded <- store.load pid
-            pure $ either storeFailure (\(p, _) -> either failure ok (drawingAt n p)) loaded
+            pure $ either storeFailure (\(p, _) -> either failure ok (pickLayer want p >>= \li -> drawingAt li n p)) loaded
     "add_items" -> edit addItemsAt
     "replace_items" -> edit replaceItemsAt
     "add_drawing" -> withArgs $ \o -> do
         pid <- arg o "project_id" (asText >=>. parse)
+        want <- optional o "layer" (fmap Just . asText) Nothing
         after <- arg o "after" asInt
         copy <- optional o "copy" asBool False
         holdFor <- optional o "hold" asInt 1
-        pure (saved <$> modifyProject store pid (insertDrawing after copy holdFor))
+        pure (saved <$> modifyProject store pid (\p -> pickLayer want p >>= \li -> insertDrawing li after copy holdFor p))
     "create_project" -> withArgs $ \o -> do
         pname <- arg o "name" (asText >=>. parse)
         c <- canvasFrom (object ["width" .= KeyMap.lookup "width" o, "height" .= KeyMap.lookup "height" o])
@@ -215,9 +241,10 @@ callTool store newId name args = case name of
     where
         edit f = withArgs $ \o -> do
             pid <- arg o "project_id" (asText >=>. parse)
+            want <- optional o "layer" (fmap Just . asText) Nothing
             n <- arg o "drawing" asInt
             items <- arg o "items" (asList >=>. traverseIndexed (parse @Item))
-            pure (saved <$> modifyProject store pid (f n items))
+            pure (saved <$> modifyProject store pid (\p -> pickLayer want p >>= \li -> f li n items p))
         saved = either (either storeFailure failure) (ok . summaryJson)
         withArgs k = case args of
             Object o -> either (pure . failure) Prelude.id (k o)

@@ -3,7 +3,6 @@
  * it previews through the shared renderer (as drafts or overlay guides) and commits edits
  * through the host. Nothing here touches the DOM.
  */
-import { addItems, setItems } from "../domain/edit";
 import {
   makeItem,
   normalizeAngle,
@@ -49,8 +48,13 @@ export interface ToolHost {
   readonly width: number;
   readonly height: number;
   project(): Project;
-  index(): number;
   settings(): Settings;
+  /** The items of the drawing being edited. */
+  items(): readonly Item[];
+  /** The project with `items` added on top of that drawing. */
+  addItems(items: readonly Item[]): Result<Project>;
+  /** The project with that drawing's items replaced. */
+  replaceItems(items: readonly Item[]): Result<Project>;
   /** Commit an edit (undoable); false if it was refused, with the reason already shown. */
   edit(r: Result<Project>): boolean;
   /** Show the current drawing with `exclude` hidden and `drafts` drawn in place. */
@@ -95,7 +99,7 @@ const withMirror = (host: ToolHost, fields: ItemFields): ItemFields[] => {
 
 const commitItems = (host: ToolHost, fields: readonly ItemFields[]): void => {
   const items = each(fields, makeItem);
-  host.edit(andThen(items, (xs) => addItems(host.project(), host.index(), xs)));
+  host.edit(andThen(items, (xs) => host.addItems(xs)));
   host.preview([]);
 };
 
@@ -243,7 +247,7 @@ export class ObjectEraserTool implements ToolController {
   constructor(private readonly host: ToolHost) {}
 
   private touch(s: Sample): void {
-    const items = this.host.project().frames[this.host.index()]?.items ?? [];
+    const items = this.host.items();
     const r = Math.max(activeSize(this.host.settings()) / 2, 8 * this.host.pixel());
     // Everything under the eraser, not only the topmost: dragging sweeps a path clear.
     const remaining = items.map((it, i) => (this.removed.has(i) ? undefined : it));
@@ -273,8 +277,8 @@ export class ObjectEraserTool implements ToolController {
   up(): void {
     if (!this.active) return;
     this.active = false;
-    const items = this.host.project().frames[this.host.index()]?.items ?? [];
-    if (this.removed.size > 0) this.host.edit(setItems(this.host.project(), this.host.index(), items.filter((_, i) => !this.removed.has(i))));
+    const items = this.host.items();
+    if (this.removed.size > 0) this.host.edit(this.host.replaceItems(items.filter((_, i) => !this.removed.has(i))));
     this.removed = new Set();
     this.host.preview([]);
   }
@@ -615,8 +619,12 @@ export class SelectTool implements ToolController {
     return this.selected.size;
   }
 
+  selectedIndices(): number[] {
+    return [...this.selected];
+  }
+
   private items(): readonly Item[] {
-    return this.host.project().frames[this.host.index()]?.items ?? [];
+    return this.host.items();
   }
 
   private box(): Box | undefined {
@@ -852,7 +860,7 @@ export class SelectTool implements ToolController {
       this.host.say("That would move it out of reach");
       return;
     }
-    this.commitSame(setItems(this.host.project(), this.host.index(), next.value));
+    this.commitSame(this.host.replaceItems(next.value));
   }
 
   /** Commit an edit that keeps every index, so the selection survives it. */
@@ -867,7 +875,7 @@ export class SelectTool implements ToolController {
     if (this.selected.size === 0) return;
     const items = this.items();
     const gone = this.selected;
-    this.host.edit(setItems(this.host.project(), this.host.index(), items.filter((_, i) => !gone.has(i))));
+    this.host.edit(this.host.replaceItems(items.filter((_, i) => !gone.has(i))));
     this.reset();
   }
 
@@ -890,7 +898,7 @@ export class SelectTool implements ToolController {
 
   private addSelected(items: readonly Item[]): void {
     const before = this.items().length;
-    if (!this.host.edit(addItems(this.host.project(), this.host.index(), items))) return;
+    if (!this.host.edit(this.host.addItems(items))) return;
     this.selected = new Set(items.map((_, i) => before + i));
     this.changed();
   }
@@ -898,7 +906,7 @@ export class SelectTool implements ToolController {
   recolor(color: Color): void {
     const items = this.items();
     const next = each([...items.entries()], ([i, it]) => (this.selected.has(i) ? recolorItem(it, color) : ok(it)));
-    if (next.ok) this.commitSame(setItems(this.host.project(), this.host.index(), next.value));
+    if (next.ok) this.commitSame(this.host.replaceItems(next.value));
   }
 
   flip(): void {
@@ -912,7 +920,7 @@ export class SelectTool implements ToolController {
     const picked = items.filter((_, i) => this.selected.has(i));
     const rest = items.filter((_, i) => !this.selected.has(i));
     const next = front ? [...rest, ...picked] : [...picked, ...rest];
-    if (!this.host.edit(setItems(this.host.project(), this.host.index(), next))) return;
+    if (!this.host.edit(this.host.replaceItems(next))) return;
     const start = front ? rest.length : 0;
     this.selected = new Set(picked.map((_, i) => start + i));
     this.changed();

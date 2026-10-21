@@ -30,9 +30,13 @@ genRawProject = do
     w <- (* 2) <$> choose (32, 3840 :: Int)
     h <- (* 2) <$> choose (32, 3840 :: Int)
     fps <- elements [12, 24, 25, 30, 48, 50, 60 :: Int]
-    frameCount <- choose (1, 3)
-    frames <- vectorOf frameCount genFrame
-    pure $ object ["format" .= (2 :: Int), "id" .= pid, "name" .= name, "canvas" .= object ["width" .= w, "height" .= h], "fps" .= fps, "frames" .= frames]
+    celCount <- choose (1, 3)
+    cels <- vectorOf celCount genCel
+    holdLast <- elements [True, False]
+    opacity' <- opacity
+    let
+        drawingLayer = object ["kind" .= ("drawing" :: Text), "id" .= ("layer-1" :: Text), "name" .= ("Layer 1" :: Text), "visible" .= True, "locked" .= False, "opacity" .= opacity', "holdLast" .= holdLast, "cels" .= cels]
+    pure $ object ["format" .= (3 :: Int), "id" .= pid, "name" .= name, "canvas" .= object ["width" .= w, "height" .= h], "fps" .= fps, "layers" .= [drawingLayer], "camera" .= ([] :: [Value]), "audio" .= ([] :: [Value])]
 
 genName :: Gen Text
 genName = do
@@ -40,12 +44,13 @@ genName = do
     t <- Text.strip . Text.pack <$> vectorOf n (elements (['a' .. 'z'] <> ['A' .. 'Z'] <> "ğüşıöç 0123456789"))
     pure (if Text.null t then "Untitled" else t)
 
-genFrame :: Gen Value
-genFrame = do
+genCel :: Gen Value
+genCel = do
     hold <- choose (1, 24 :: Int)
+    mark <- elements ["none", "key", "breakdown", "inbetween" :: Text]
     n <- choose (0, 4)
     items <- vectorOf n genItem
-    pure $ object ["hold" .= hold, "items" .= items]
+    pure $ object ["hold" .= hold, "mark" .= mark, "items" .= items]
 
 coord :: Gen Double
 coord = choose (-5000, 5000)

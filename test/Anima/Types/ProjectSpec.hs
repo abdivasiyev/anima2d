@@ -20,7 +20,7 @@ spec = do
         it "parse . unparse is Right"
             $ forAll genProject
             $ \p -> parse (unparse p) === Right p
-        it "writes back exactly the format 2 it read"
+        it "writes back exactly the format 3 it read"
             $ forAll genRawProject
             $ \raw -> (unparse <$> parse @Project raw) === Right raw
         it "survives JSON"

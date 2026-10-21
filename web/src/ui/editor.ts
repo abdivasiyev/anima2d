@@ -5,35 +5,88 @@
  * into `PenSample`s and goes to the current tool; a touch can never become one, so
  * fingers and a resting palm only ever pan, zoom, rotate, or tap for undo and redo.
  */
-import { ProjectSync, type Opened, type SyncState } from "../sync";
-import { clearFrame, duplicate, insertBlank, remove, rename, setFps, setHold } from "../domain/edit";
+import { assetUrl, uploadAsset } from "../api";
+import {
+  addAudio,
+  addDrawingLayer,
+  addItems,
+  addReferenceLayer,
+  clearCel,
+  duplicate,
+  duplicateRange,
+  insertBlank,
+  insertCels,
+  moveLayer,
+  pingPongRange,
+  remove,
+  removeAudio,
+  removeCameraKey,
+  removeLayer,
+  removeRange,
+  rename,
+  repeatRange,
+  replaceAudio,
+  reverseRange,
+  setCameraKey,
+  setFps,
+  setHold,
+  setItems,
+  setMark,
+  updateLayer,
+  type Range,
+  type Where,
+} from "../domain/edit";
 import { parsePenSample, type PenSample } from "../domain/pen";
 import {
   BRUSHES,
+  EASES,
   FPS_VALUES,
+  MAX_TIMELINE_FRAME,
   SCATTERS,
+  celAt,
+  celStart,
   duration,
+  isDrawing,
+  makeAudioTrack,
+  makeCameraKey,
+  normalizeAngle,
+  parseAssetId,
   parseBrushSize,
   parseColor,
   parseFps,
+  parseFrameIndex,
   parseHold,
+  parseLabel,
+  parseLayerId,
+  parseOffset,
   parseOpacity,
   parseProjectName,
+  parseVec,
+  parseVolume,
+  parseZoom,
+  type AssetId,
+  type CameraKey,
+  type Cel,
   type Color,
-  type Frame,
+  type DrawingLayer,
   type ItemFields,
+  type LabelName,
+  type Layer,
+  type Mark,
+  type Media,
   type Project,
 } from "../domain/project";
-import { type Result } from "../domain/result";
+import { andThen, err, ok, unwrap, type Result } from "../domain/result";
 import { decodeJson } from "../domain/wire";
 import {
   ERASERS,
   GAPS,
   SHAPE_TOOLS,
+  SPEEDS,
+  activeSize,
   parseOnionRange,
   parseSettings,
   parseStabilizer,
-  activeSize,
   sizeKey,
   unparseSettings,
   withSetting,
@@ -42,7 +95,9 @@ import {
   type Tool,
 } from "../domain/settings";
 import { FILL_RASTER, rasterFromAlpha, type Raster } from "../editor/fill";
+import type { XY } from "../editor/geometry";
 import { History } from "../editor/history";
+import { CelCache, cameraAt, drawLayers, drawOutput } from "../editor/output";
 import { LayeredFrame, drawThumbnail, type Ctx } from "../editor/render";
 import type { Sample } from "../editor/stabilizer";
 import {
@@ -56,11 +111,15 @@ import {
   type ToolController,
   type ToolHost,
 } from "../editor/tools";
+import { alongPath, inbetween } from "../editor/tween";
 import { clampScale, cssTransform, fit, pinch, snapRotation, toCanvas, type View } from "../editor/view";
+import { ProjectSync, type Opened, type SyncState } from "../sync";
+import { AudioEngine } from "./audio";
 import { h } from "./dom";
 import { fullscreenSupported, isFullscreen, onFullscreenChange, runningAsApp, toggleFullscreen } from "./fullscreen";
 import { icon, iconButton, setIcon, type IconName } from "./icons";
 import { closeMenu, openMenu, type MenuItem } from "./menu";
+import { Timeline, startOf, type LoopRange } from "./timeline";
 
 const SETTINGS_KEY = "anima2d.settings";
 const TAP_MS = 280;
@@ -144,7 +203,15 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const initial = opened.project;
   const history = new History<Project>(initial);
   let settings = loadSettings();
-  let index = 0;
+  // The layer being drawn on, its drawing under the playhead, and the playhead itself.
+  let layerIdx = Math.max(0, initial.layers.findLastIndex((l) => isDrawing(l)));
+  let celIdx = 0;
+  let t = 0;
+  let rangeEnd: number | undefined;
+  let loop: LoopRange | undefined;
+  /** Drawings pinned to the light table, as "layer id:drawing". */
+  const pins = new Set<string>();
+  const audio = new AudioEngine();
   let view: View = { tx: 0, ty: 0, scale: 1, rotation: 0 };
   let playing = false;
   let shiftHeld = false;
@@ -155,10 +222,14 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   // Layout ------------------------------------------------------------------------------
 
+  const [belowCanvas, belowCtx] = canvas2d(W, H, "below");
   const [onionCanvas, onionCtx] = canvas2d(W, H, "onion");
   const [inkCanvas, inkCtx] = canvas2d(W, H, "ink", { willReadFrequently: true });
+  const [aboveCanvas, aboveCtx] = canvas2d(W, H, "above");
+  const [outputCanvas, outputCtx] = canvas2d(W, H, "output");
+  outputCanvas.hidden = true;
   const [guideCanvas, guideCtx] = canvas2d(W, H, "live");
-  const stage = h("div", { class: "stage" }, onionCanvas, inkCanvas, guideCanvas);
+  const stage = h("div", { class: "stage" }, belowCanvas, onionCanvas, inkCanvas, aboveCanvas, outputCanvas, guideCanvas);
   stage.style.width = `${W}px`;
   stage.style.height = `${H}px`;
 
@@ -250,7 +321,16 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   const beforeRange = h("input", { type: "range", min: 0, max: 5, step: 1, "aria-label": "Drawings before" });
   const afterRange = h("input", { type: "range", min: 0, max: 5, step: 1, "aria-label": "Drawings after" });
-  const onionPop = h("div", { class: "popover", hidden: true }, h("label", {}, "Before", beforeRange), h("label", {}, "After", afterRange));
+  const onionTint = h("input", { type: "checkbox" });
+  const onionKeys = h("input", { type: "checkbox" });
+  const onionPop = h(
+    "div",
+    { class: "popover", hidden: true },
+    h("label", {}, "Before", beforeRange),
+    h("label", {}, "After", afterRange),
+    h("label", { class: "toggle" }, "Tint red and green", onionTint),
+    h("label", { class: "toggle" }, "Keys only", onionKeys),
+  );
 
   // Selection action bar.
   const selButton = (name: IconName, label: string, shortcut?: string): HTMLButtonElement => iconButton(name, label, shortcut);
@@ -271,16 +351,21 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const nextBtn = iconButton("next", "Next drawing", ".");
   const counter = h("span", { class: "counter" });
   const fpsSelect = h("select", { class: "mini-select", "aria-label": "Frame rate" }, ...FPS_VALUES.map((f) => h("option", { value: f }, `${f} fps`)));
+  const speedSelect = h("select", { class: "mini-select", "aria-label": "Playback speed", title: "Playback speed" }, ...SPEEDS.map((s) => h("option", { value: s }, `${s}×`)));
+  const loopBtn = iconButton("loop", "Loop the selected drawings", "L");
   const holdLabel = h("span", {});
   const holdDown = h("button", { type: "button", "aria-label": "Shorter hold" }, "−");
   const holdUp = h("button", { type: "button", "aria-label": "Longer hold" }, "+");
   const hold = h("div", { class: "stepper", title: "How many frames this drawing is held for" }, holdDown, holdLabel, holdUp);
   const onionBtn = iconButton("onion", "Onion skin", "O");
-  const onionRangeBtn = h("button", { type: "button", class: "mini-select", "aria-label": "Onion skin range", title: "Drawings shown before and after" });
+  const onionRangeBtn = h("button", { type: "button", class: "mini-select", "aria-label": "Onion skin options", title: "Onion skin options" });
+  const cameraBtn = iconButton("camera", "Camera keys");
+  const tweenBtn = iconButton("tween", "Inbetween to the next drawing");
+  const pathBtn = iconButton("path", "Move along a path");
   const addBtn = iconButton("add", "New drawing", "N");
   const dupBtn = iconButton("duplicate", "Duplicate drawing", "D");
   const delBtn = iconButton("remove", "Delete drawing");
-  const frames = h("div", { class: "frames", role: "listbox", "aria-label": "Drawings" });
+  const layerAddBtn = h("button", { type: "button", class: "btn small" }, icon("add"), "Layer");
   const transport = h(
     "div",
     { class: "transport" },
@@ -290,25 +375,74 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     counter,
     h("div", { class: "sep" }),
     fpsSelect,
+    speedSelect,
+    loopBtn,
     h("div", { class: "sep hide-narrow" }),
     hold,
     h("div", { class: "spacer" }),
     onionBtn,
     onionRangeBtn,
+    cameraBtn,
     h("div", { class: "sep" }),
+    tweenBtn,
+    pathBtn,
     addBtn,
     dupBtn,
     delBtn,
+    h("div", { class: "sep" }),
+    layerAddBtn,
   );
-  const timeline = h("footer", { class: "timeline" }, transport, frames);
+  const fileInput = h("input", { type: "file", hidden: true });
+  const tl = new Timeline({
+    selectCel: (l, c, extend) => {
+      selectCel(l, c, extend);
+    },
+    scrub: (f) => {
+      scrub(f);
+    },
+    setLoop: (r) => {
+      loop = r;
+      renderTimeline();
+    },
+    toggleVisible: (i) => {
+      const l = project().layers[i];
+      if (l !== undefined) edit(updateLayer(project(), i, { visible: !l.visible }));
+    },
+    toggleLock: (i) => {
+      const l = project().layers[i];
+      if (l !== undefined) edit(updateLayer(project(), i, { locked: !l.locked }));
+    },
+    layerMenu: (i, x, y) => {
+      openMenu(x, y, layerMenu(i));
+    },
+    celMenu: (x, y) => {
+      openMenu(x, y, celMenu());
+    },
+    cameraKeyMenu: (f, x, y) => {
+      openMenu(x, y, cameraKeyMenu(f));
+    },
+    audioMenu: (i, x, y) => {
+      openMenu(x, y, audioMenu(i));
+    },
+    thumbnail: (cel, w, hh) => thumbFor(cel, w, hh),
+    peaks: (asset) => audio.peaks(asset),
+  });
+  const timeline = h("footer", { class: "timeline" }, transport, tl.el, fileInput);
   const toast = h("div", { class: "toast", role: "status" });
   const root = h("div", { class: "editor" }, topbar, workspace, timeline, toast);
 
   // Rendering ---------------------------------------------------------------------------
 
   const project = (): Project => history.current;
-  const currentFrame = (): Frame => project().frames[index] ?? project().frames[0];
+  const drawing = (): DrawingLayer | undefined => {
+    const l = project().layers[layerIdx];
+    return l !== undefined && isDrawing(l) ? l : undefined;
+  };
+  const currentCel = (): Cel | undefined => drawing()?.cels[celIdx];
+  const where = (): Where => ({ layer: layerIdx, cel: celIdx });
+  const pinKey = (layer: number, cel: number): string => `${project().layers[layer]?.id ?? ""}:${cel}`;
 
+  const cache = new CelCache(W, H, 64);
   const layers = new LayeredFrame(W, H);
   const onionLayers = new LayeredFrame(W, H);
   const onionScratch = new OffscreenCanvas(W, H);
@@ -319,27 +453,111 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   let guideDraw: ((ctx: Ctx, pixel: number) => void) | null = null;
   let liveQueued = false;
 
-  /** Re-render the drawing's layers (after an edit, or a change in what is hidden). */
-  const renderLayers = (frame: Frame = currentFrame()): void => {
-    layers.render(frame.items.filter((_, i) => !excluded.has(i)));
+  // Reference images and videos, loaded from the server once.
+  const media = new Map<string, HTMLImageElement | HTMLVideoElement>();
+  const mediaFor = (layer: Layer): HTMLImageElement | HTMLVideoElement | undefined => {
+    if (layer.kind !== "reference") return undefined;
+    const known = media.get(layer.asset);
+    if (known !== undefined) return known;
+    const el = layer.media === "video" ? h("video", { muted: true, playsinline: true, preload: "auto" }) : h("img", {});
+    el.src = assetUrl(layer.asset);
+    const redraw = (): void => {
+      renderScene();
+    };
+    el.addEventListener(layer.media === "video" ? "seeked" : "load", redraw);
+    if (el instanceof HTMLVideoElement) el.addEventListener("loadeddata", redraw);
+    media.set(layer.asset, el);
+    return el;
+  };
+  const reference = (ctx: Ctx, layer: Layer): void => {
+    const el = mediaFor(layer);
+    if (el === undefined) return;
+    const w = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
+    const hh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
+    if (w === 0 || hh === 0) return;
+    if (el instanceof HTMLVideoElement) {
+      // The video follows the playhead, frame for frame.
+      const want = t / project().fps;
+      if (Math.abs(el.currentTime - want) > 0.5 / project().fps && !el.seeking) el.currentTime = Math.min(want, Math.max(0, el.duration - 0.01) || want);
+    }
+    const k = Math.min(W / w, H / hh);
+    ctx.drawImage(el, (W - w * k) / 2, (H - hh * k) / 2, w * k, hh * k);
+  };
+
+  /** Every layer below and above the one being edited, at the playhead. */
+  const renderScene = (): void => {
+    const p = project();
+    belowCtx.clearRect(0, 0, W, H);
+    aboveCtx.clearRect(0, 0, W, H);
+    const below = p.layers.flatMap((_, i) => (i < layerIdx ? [i] : []));
+    const above = p.layers.flatMap((_, i) => (i > layerIdx ? [i] : []));
+    drawLayers(belowCtx, p, t, cache, { layers: below, reference });
+    drawLayers(aboveCtx, p, t, cache, { layers: above, reference });
+  };
+
+  /** Re-render the edited drawing's planes (after an edit, or a change in what is hidden). */
+  const renderLayers = (): void => {
+    const c = currentCel();
+    layers.render(c === undefined ? [] : c.items.filter((_, i) => !excluded.has(i)));
+  };
+
+  /** The camera's view at the playhead, as a shape on the canvas. */
+  const cameraFrame = (): XY[] | undefined => {
+    const cam = cameraAt(project(), t);
+    if (cam === undefined) return undefined;
+    return [
+      [0, 0],
+      [W, 0],
+      [W, H],
+      [0, H],
+    ].map(([x = 0, y = 0]): XY => {
+      const dx = (x - W / 2) / cam.zoom;
+      const dy = (y - H / 2) / cam.zoom;
+      const c = Math.cos(cam.rotation);
+      const s = Math.sin(cam.rotation);
+      return [cam.cx + dx * c - dy * s, cam.cy + dx * s + dy * c];
+    });
   };
 
   const composite = (): void => {
     inkCtx.clearRect(0, 0, W, H);
-    layers.composite(inkCtx, drafts);
+    const l = drawing();
+    if (l !== undefined && l.visible && currentCel() !== undefined) {
+      inkCtx.save();
+      inkCtx.globalAlpha = l.opacity;
+      layers.composite(inkCtx, drafts);
+      inkCtx.restore();
+    }
     guideCtx.clearRect(0, 0, W, H);
-    if (settings.symmetry && !playing) {
+    if (playing) return;
+    const px = 1 / view.scale;
+    if (settings.symmetry) {
       guideCtx.save();
       guideCtx.strokeStyle = "rgba(47, 107, 255, 0.55)";
-      guideCtx.lineWidth = 1 / view.scale;
-      guideCtx.setLineDash([6 / view.scale, 6 / view.scale]);
+      guideCtx.lineWidth = px;
+      guideCtx.setLineDash([6 * px, 6 * px]);
       guideCtx.beginPath();
       guideCtx.moveTo(W / 2, 0);
       guideCtx.lineTo(W / 2, H);
       guideCtx.stroke();
       guideCtx.restore();
     }
-    if (guideDraw !== null) guideDraw(guideCtx, 1 / view.scale);
+    const frame = cameraFrame();
+    if (frame !== undefined) {
+      guideCtx.save();
+      guideCtx.strokeStyle = "rgba(229, 72, 77, 0.8)";
+      guideCtx.lineWidth = 1.5 * px;
+      guideCtx.setLineDash([10 * px, 6 * px]);
+      guideCtx.beginPath();
+      for (const [i, c] of frame.entries()) {
+        if (i === 0) guideCtx.moveTo(c[0], c[1]);
+        else guideCtx.lineTo(c[0], c[1]);
+      }
+      guideCtx.closePath();
+      guideCtx.stroke();
+      guideCtx.restore();
+    }
+    if (guideDraw !== null) guideDraw(guideCtx, px);
   };
 
   const compositeSoon = (): void => {
@@ -351,80 +569,78 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     });
   };
 
-  const renderInk = (frame: Frame = currentFrame()): void => {
-    renderLayers(frame);
+  const renderInk = (): void => {
+    renderLayers();
     composite();
   };
 
   const renderOnion = (): void => {
     onionCtx.clearRect(0, 0, W, H);
-    if (!settings.onion || playing || onionScratchCtx === null) return;
+    const l = drawing();
+    if (playing || onionScratchCtx === null || l === undefined) return;
     const css = getComputedStyle(root);
     const past = css.getPropertyValue("--onion-past").trim() || "#e5484d";
     const future = css.getPropertyValue("--onion-future").trim() || "#30a46c";
-    const layer = (offset: number, tint: string, reach: number): void => {
-      const f = project().frames[index + offset];
-      if (f === undefined) return;
-      onionLayers.render(f.items, { tint });
+    const pinned = css.getPropertyValue("--accent").trim() || "#2f6bff";
+    const draw = (cel: Cel, tint: string | undefined, alpha: number): void => {
+      onionLayers.render(cel.items, tint === undefined ? {} : { tint });
       onionScratchCtx.clearRect(0, 0, W, H);
       onionLayers.composite(onionScratchCtx);
-      onionCtx.globalAlpha = 0.42 * (1 - (Math.abs(offset) - 1) / Math.max(1, reach));
+      onionCtx.globalAlpha = alpha;
       onionCtx.drawImage(onionScratch, 0, 0);
     };
-    const before: number = settings.onionBefore;
-    const after: number = settings.onionAfter;
-    // Furthest first, so the nearest drawing lands on top.
-    for (let k = before; k >= 1; k--) layer(-k, past, before);
-    for (let k = after; k >= 1; k--) layer(k, future, after);
+    if (settings.onion) {
+      // The neighbours, or with "keys only" the nearest keys, furthest first so the nearest land on top.
+      const candidates = (step: -1 | 1, count: number): Cel[] => {
+        const out: Cel[] = [];
+        for (let i = celIdx + step; i >= 0 && i < l.cels.length && out.length < count; i += step) {
+          const c = l.cels[i];
+          if (c !== undefined && (!settings.onionKeys || c.mark === "key")) out.push(c);
+        }
+        return out;
+      };
+      const tinted = settings.onionMode === "tint";
+      const side = (cels: Cel[], tint: string): void => {
+        for (let k = cels.length - 1; k >= 0; k--) {
+          const c = cels[k];
+          if (c !== undefined) draw(c, tinted ? tint : undefined, (tinted ? 0.42 : 0.3) * (1 - k / Math.max(1, cels.length)));
+        }
+      };
+      side(candidates(-1, settings.onionBefore), past);
+      side(candidates(1, settings.onionAfter), future);
+    }
+    // The light table: pinned drawings from any layer, faint, wherever the playhead is.
+    for (const [li, layer] of project().layers.entries()) {
+      if (!isDrawing(layer)) continue;
+      for (const [ci, cel] of layer.cels.entries()) if (pins.has(pinKey(li, ci)) && !(li === layerIdx && ci === celIdx)) draw(cel, pinned, 0.3);
+    }
     onionCtx.globalAlpha = 1;
   };
 
-  const thumbs = new WeakMap<Frame, OffscreenCanvas>();
-  const thumbFor = (f: Frame, tw: number, th: number): OffscreenCanvas => {
-    const cached = thumbs.get(f);
+  const thumbs = new WeakMap<Cel, OffscreenCanvas>();
+  const thumbFor = (c: Cel, tw: number, th: number): OffscreenCanvas => {
+    const cached = thumbs.get(c);
     if (cached !== undefined) return cached;
-    const c = new OffscreenCanvas(tw * 2, th * 2);
-    const ctx = c.getContext("2d");
-    if (ctx !== null) drawThumbnail(ctx, f, W, H);
-    thumbs.set(f, c);
-    return c;
+    const canvas = new OffscreenCanvas(Math.max(1, tw * 2), Math.max(1, th * 2));
+    const ctx = canvas.getContext("2d");
+    if (ctx !== null) drawThumbnail(ctx, c, W, H);
+    thumbs.set(c, canvas);
+    return canvas;
   };
 
-  const renderStrip = (): void => {
-    const th = 56;
-    const tw = Math.round(Math.min(120, Math.max(32, (th * W) / H)));
-    const cells = project().frames.map((f, i) => {
-      const [c, ctx] = canvas2d(tw * 2, th * 2, "");
-      c.style.width = `${tw}px`;
-      c.style.height = `${th}px`;
-      ctx.drawImage(thumbFor(f, tw, th), 0, 0);
-      const cell = h(
-        "button",
-        { type: "button", class: "frame", role: "option", "aria-current": String(i === index), "aria-label": `Drawing ${i + 1}` },
-        c,
-        h("span", { class: "num" }, String(i + 1)),
-        f.hold > 1 ? h("span", { class: "hold" }, `×${f.hold}`) : null,
-      );
-      cell.addEventListener("click", () => {
-        select(i);
-      });
-      cell.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        select(i);
-        openMenu(e.clientX, e.clientY, frameMenu());
-      });
-      return cell;
-    });
-    const add = h("button", { type: "button", class: "frame-add", "aria-label": "New drawing" }, icon("add"));
-    add.addEventListener("click", () => {
-      edit(insertBlank(project(), index), index + 1);
-    });
-    frames.replaceChildren(...cells, add);
-    frames.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const pinnedCels = (): Set<Cel> => {
+    const out = new Set<Cel>();
+    for (const [li, layer] of project().layers.entries())
+      if (isDrawing(layer)) for (const [ci, cel] of layer.cels.entries()) if (pins.has(pinKey(li, ci))) out.add(cel);
+    return out;
   };
 
-  const toolIcon = (t: Exclude<Tool, "eyedropper">): IconName => {
-    switch (t) {
+  const renderTimeline = (): void => {
+    tl.update({ project: project(), layer: layerIdx, cel: celIdx, t, rangeEnd, loop, pinned: pinnedCels() });
+  };
+
+  const toolIcon = (tool: Exclude<Tool, "eyedropper">): IconName => {
+    switch (tool) {
       case "brush":
         return settings.brush === "pen" ? "pen" : settings.brush;
       case "scatter":
@@ -434,27 +650,34 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       case "select":
       case "eraser":
       case "fill":
-        return t;
+        return tool;
     }
   };
 
   const renderChrome = (): void => {
     const p = project();
-    counter.replaceChildren(h("b", {}, String(index + 1)), ` / ${p.frames.length}`);
-    holdLabel.textContent = `${currentFrame().hold} ${currentFrame().hold === 1 ? "frame" : "frames"}`;
+    const total = duration(p);
+    const cel = currentCel();
+    const secs = (f: number): string => `${Math.floor(f / p.fps)}:${String(f % p.fps).padStart(2, "0")}`;
+    counter.replaceChildren(h("b", {}, String(t + 1)), ` / ${total}`, h("span", { class: "timecode" }, ` ${secs(t)}`));
+    holdLabel.textContent = cel === undefined ? "—" : `${cel.hold} ${cel.hold === 1 ? "frame" : "frames"}`;
     fpsSelect.value = String(p.fps);
+    speedSelect.value = String(settings.speed);
     if (document.activeElement !== title) title.value = p.name;
     undoBtn.disabled = !history.canUndo;
     redoBtn.disabled = !history.canRedo;
-    delBtn.disabled = p.frames.length === 1;
-    prevBtn.disabled = index === 0;
-    nextBtn.disabled = index === p.frames.length - 1;
-    for (const [t, b] of Object.entries(toolButtons)) b.setAttribute("aria-pressed", String(settings.tool === t));
-    for (const t of ["brush", "scatter", "shape"] as const) setIcon(toolButtons[t], toolIcon(t));
+    const l = drawing();
+    delBtn.disabled = l === undefined || l.cels.length === 1;
+    prevBtn.disabled = celIdx === 0;
+    nextBtn.disabled = l === undefined || celIdx >= l.cels.length - 1;
+    loopBtn.setAttribute("aria-pressed", String(loop !== undefined));
+    for (const [tool, b] of Object.entries(toolButtons)) b.setAttribute("aria-pressed", String(settings.tool === tool));
+    for (const tool of ["brush", "scatter", "shape"] as const) setIcon(toolButtons[tool], toolIcon(tool));
     toolButtons.eraser.classList.toggle("badge", settings.eraser === "object");
     toolButtons.eraser.title = `${ERASER_LABELS[settings.eraser]} (E)`;
     symmetryBtn.setAttribute("aria-pressed", String(settings.symmetry));
     onionBtn.setAttribute("aria-pressed", String(settings.onion));
+    cameraBtn.setAttribute("aria-pressed", String(p.camera.length > 0));
     stabBtn.setAttribute("aria-pressed", String(settings.stabilizer > 0));
     swatchDot.style.background = settings.color;
     swatchDot.style.opacity = String(Math.max(0.25, settings.opacity));
@@ -465,13 +688,16 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     stabRange.value = String(settings.stabilizer);
     beforeRange.value = String(settings.onionBefore);
     afterRange.value = String(settings.onionAfter);
+    onionTint.checked = settings.onionMode === "tint";
+    onionKeys.checked = settings.onionKeys;
     onionRangeBtn.textContent = `${String(settings.onionBefore)} · ${String(settings.onionAfter)}`;
     const size = activeSize(settings);
-    const t = Math.sqrt((size - 0.5) / 199.5);
-    sizeFill.style.height = `calc(${t} * (100% - 12px))`;
-    sizeKnob.style.bottom = `calc(6px + ${t} * (100% - 12px))`;
+    const k = Math.sqrt((size - 0.5) / 199.5);
+    sizeFill.style.height = `calc(${k} * (100% - 12px))`;
+    sizeKnob.style.bottom = `calc(6px + ${k} * (100% - 12px))`;
     sizeValue.textContent = size < 10 ? size.toFixed(1) : String(Math.round(size));
     workspace.dataset.tool = settings.tool;
+    workspace.classList.toggle("locked", project().layers[layerIdx]?.locked === true);
   };
 
   const renderView = (): void => {
@@ -481,9 +707,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   };
 
   const renderAll = (): void => {
+    renderScene();
     renderInk();
     renderOnion();
-    renderStrip();
+    renderTimeline();
     renderChrome();
   };
 
@@ -526,15 +753,34 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   // Editing -----------------------------------------------------------------------------
 
-  /** Commit an edit, or say why it could not be made. */
-  const edit = (r: Result<Project>, nextIndex = index): boolean => {
+  /** Keep the edited layer and drawing pointing at something that exists. */
+  const clampSelection = (): void => {
+    const p = project();
+    const here = p.layers[layerIdx];
+    if (here === undefined || !isDrawing(here)) {
+      const nearest = p.layers.findLastIndex((l) => isDrawing(l));
+      layerIdx = Math.max(0, nearest);
+    }
+    const l = drawing();
+    celIdx = Math.max(0, Math.min((l?.cels.length ?? 1) - 1, celIdx));
+    if (rangeEnd !== undefined && l !== undefined && rangeEnd >= l.cels.length) rangeEnd = undefined;
+  };
+
+  /** Commit an edit, or say why it could not be made; `next` moves the selection with it. */
+  const edit = (r: Result<Project>, next?: Partial<Where>): boolean => {
     if (!r.ok) {
       say(r.error);
       return false;
     }
     history.commit(r.value);
-    if (nextIndex !== index) selectTool.reset();
-    index = Math.max(0, Math.min(r.value.frames.length - 1, nextIndex));
+    if (next !== undefined) {
+      if (next.layer !== undefined) layerIdx = next.layer;
+      if (next.cel !== undefined) celIdx = next.cel;
+      selectTool.reset();
+      rangeEnd = undefined;
+      clampSelection();
+      t = startOf(project(), layerIdx, celIdx);
+    } else clampSelection();
     excluded = new Set();
     drafts = [];
     renderAll();
@@ -547,24 +793,44 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     current().cancel();
     selectTool.reset();
     history.commit(p);
-    index = Math.min(index, p.frames.length - 1);
+    clampSelection();
     renderAll();
     say(note);
   };
 
-  const select = (i: number): void => {
+  const selectCel = (layer: number, cel: number, extend: boolean): void => {
     if (playing) stop();
     current().deactivate();
     selectTool.reset();
-    index = Math.max(0, Math.min(project().frames.length - 1, i));
+    if (extend && layer === layerIdx) rangeEnd = cel;
+    else {
+      layerIdx = layer;
+      celIdx = cel;
+      rangeEnd = undefined;
+    }
+    clampSelection();
+    if (!extend) t = startOf(project(), layerIdx, celIdx);
     renderAll();
+  };
+
+  /** Move the playhead; the edited layer's drawing under it becomes the one being edited. */
+  const scrub = (frame: number): void => {
+    if (playing) stop();
+    current().deactivate();
+    selectTool.reset();
+    t = Math.max(0, Math.min(MAX_TIMELINE_FRAME, Math.round(frame)));
+    const l = drawing();
+    if (l !== undefined) celIdx = celAt(l, t) ?? l.cels.length - 1;
+    rangeEnd = undefined;
+    renderAll();
+    audio.snippet(project(), t);
   };
 
   const undo = (): void => {
     current().cancel();
     if (!history.undo()) return;
     selectTool.reset();
-    index = Math.min(index, project().frames.length - 1);
+    clampSelection();
     renderAll();
     scheduleSave();
     say("Undo");
@@ -574,7 +840,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     current().cancel();
     if (!history.redo()) return;
     selectTool.reset();
-    index = Math.min(index, project().frames.length - 1);
+    clampSelection();
     renderAll();
     scheduleSave();
     say("Redo");
@@ -591,14 +857,29 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     if (c.ok) updateSettings("color", c.value);
   };
 
+  /** The selected run of drawings on the edited layer, if more than one is selected. */
+  const range = (): Range | undefined => (rangeEnd === undefined || rangeEnd === celIdx ? undefined : { layer: layerIdx, from: celIdx, to: rangeEnd });
+
   // Tools -------------------------------------------------------------------------------
+
+  /** Where an edit can land: an unlocked drawing layer with a drawing at the playhead. */
+  const editable = (): Result<Where> => {
+    const l = drawing();
+    if (l === undefined) return err("Pick a drawing layer to draw on");
+    if (l.locked) return err("This layer is locked");
+    if (celAt(l, t) === undefined) return err("This layer ends before here; add a drawing first");
+    return ok(where());
+  };
+
 
   const host: ToolHost = {
     width: W,
     height: H,
     project,
-    index: () => index,
     settings: () => settings,
+    items: () => currentCel()?.items ?? [],
+    addItems: (xs) => andThen(editable(), (at) => addItems(project(), at, xs)),
+    replaceItems: (xs) => andThen(editable(), (at) => setItems(project(), at, xs)),
     edit: (r) => edit(r),
     preview: (next, exclude) => {
       const hide = exclude ?? new Set<number>();
@@ -623,7 +904,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       const w = Math.max(1, Math.ceil(W * s));
       const hh = Math.max(1, Math.ceil(H * s));
       const small = new LayeredFrame(w, hh, s);
-      small.render(currentFrame().items);
+      small.render(currentCel()?.items ?? []);
       const ctx = small.line.getContext("2d");
       const data = ctx === null ? new Uint8ClampedArray(w * hh * 4) : ctx.getImageData(0, 0, w, hh).data;
       return rasterFromAlpha(data, w, hh, s);
@@ -654,6 +935,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   });
 
   const current = (): ToolController => {
+    if (pathCapture !== undefined) return pathTool;
     switch (settings.tool) {
       case "select":
         return selectTool;
@@ -782,23 +1064,218 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     );
   }
 
-  // Context menu ------------------------------------------------------------------------
+  // Menus -------------------------------------------------------------------------------
 
   const stepHold = (delta: number): void => {
-    const next = parseHold(currentFrame().hold + delta);
-    if (next.ok) edit(setHold(project(), index, next.value));
+    const c = currentCel();
+    if (c === undefined) return;
+    const next = parseHold(c.hold + delta);
+    if (next.ok) edit(setHold(project(), where(), next.value));
   };
 
-  const frameMenu = (): MenuItem[] => [
-    { label: "New drawing after", shortcut: "N", action: () => { edit(insertBlank(project(), index), index + 1); } },
-    { label: "Duplicate drawing", shortcut: "D", action: () => { edit(duplicate(project(), index), index + 1); } },
+  /** A small dialog asking for one line of text. */
+  const askText = (heading: string, initial: string): Promise<string | undefined> =>
+    new Promise((resolve) => {
+      const input = h("input", { class: "input", value: initial, maxlength: 40, autocomplete: "off", spellcheck: "false" });
+      const cancel = h("button", { type: "button", class: "btn" }, "Cancel");
+      const okBtn = h("button", { type: "submit", class: "btn primary" }, "Save");
+      const form = h("form", { method: "dialog" }, h("div", { class: "dialog-body" }, h("h3", {}, heading), input), h("div", { class: "dialog-actions" }, cancel, okBtn));
+      const dialog = h("dialog", {}, form);
+      root.append(dialog);
+      const done = (v: string | undefined): void => {
+        dialog.close();
+        dialog.remove();
+        resolve(v);
+      };
+      cancel.addEventListener("click", () => {
+        done(undefined);
+      });
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        done(input.value);
+      });
+      dialog.showModal();
+      input.select();
+    });
+
+  /** The file picker, for reference images and video and for audio. */
+  const pickFile = (accept: string): Promise<File | undefined> =>
+    new Promise((resolve) => {
+      fileInput.accept = accept;
+      fileInput.value = "";
+      fileInput.onchange = () => {
+        resolve(fileInput.files?.[0]);
+      };
+      fileInput.click();
+    });
+
+  const upload = async (file: File): Promise<Result<AssetId>> => {
+    say("Uploading…");
+    const r = await uploadAsset(file);
+    if (r.kind !== "ok") return err(r.kind === "offline" ? "The server is out of reach; uploads need it" : r.kind === "error" ? r.error : "Upload refused");
+    return parseAssetId(r.value);
+  };
+
+  const label = (raw: string, fallback: string): LabelName => {
+    const l = parseLabel(raw);
+    return l.ok ? l.value : unwrap(parseLabel(fallback));
+  };
+
+  const addMenu = (): MenuItem[] => [
+    { label: "Drawing layer", action: () => { edit(addDrawingLayer(project(), layerIdx, label(`Layer ${project().layers.length + 1}`, "Layer")), { layer: layerIdx + 1, cel: 0 }); } },
+    {
+      label: "Background layer (drawn once, held to the end)",
+      action: () => {
+        const at = project().layers.findIndex((l) => l.kind === "drawing");
+        edit(addDrawingLayer(project(), Math.max(-1, at - 1), label("Background", "Background"), true), { layer: Math.max(0, at), cel: 0 });
+      },
+    },
     "separator",
-    { label: "Hold one frame longer", disabled: currentFrame().hold >= 24, action: () => { stepHold(1); } },
-    { label: "Hold one frame shorter", disabled: currentFrame().hold <= 1, action: () => { stepHold(-1); } },
-    "separator",
-    { label: "Clear drawing", disabled: currentFrame().items.length === 0, action: () => { edit(clearFrame(project(), index)); } },
-    { label: "Delete drawing", danger: true, disabled: project().frames.length === 1, action: () => { edit(remove(project(), index), index - 1 < 0 ? 0 : index - 1); } },
+    { label: "Reference image…", action: () => { void addReference("image/*", "image"); } },
+    { label: "Reference video…", action: () => { void addReference("video/*", "video"); } },
+    { label: "Audio track…", action: () => { void addAudioTrack(); } },
   ];
+
+  const addReference = async (accept: string, kind: Media): Promise<void> => {
+    const file = await pickFile(accept);
+    if (file === undefined) return;
+    const id = await upload(file);
+    if (!id.ok) {
+      say(id.error);
+      return;
+    }
+    edit(addReferenceLayer(project(), id.value, kind, label(file.name.replace(/\.[^.]+$/, ""), "Reference")), { layer: layerIdx + 1 });
+  };
+
+  const addAudioTrack = async (): Promise<void> => {
+    const file = await pickFile("audio/*");
+    if (file === undefined) return;
+    const id = await upload(file);
+    if (!id.ok) {
+      say(id.error);
+      return;
+    }
+    const tid = parseLayerId(`audio-${crypto.randomUUID().slice(0, 8)}`);
+    if (!tid.ok) return;
+    void audio.load(id.value).then(() => {
+      renderTimeline();
+    });
+    edit(addAudio(project(), makeAudioTrack(tid.value, id.value, label(file.name.replace(/\.[^.]+$/, ""), "Audio"), unwrap(parseOffset(0)), unwrap(parseVolume(1)), false)));
+  };
+
+  const layerMenu = (i: number): MenuItem[] => {
+    const l = project().layers[i];
+    if (l === undefined) return [];
+    const drawingLayers = project().layers.filter(isDrawing).length;
+    const opacities = [1, 0.75, 0.5, 0.25].map(
+      (o): MenuItem => ({ label: `Opacity ${Math.round(o * 100)}%`, checked: Math.abs(l.opacity - o) < 0.01, action: () => { edit(updateLayer(project(), i, { opacity: unwrap(parseOpacity(o)) })); } }),
+    );
+    return [
+      {
+        label: "Rename…",
+        action: () => {
+          void askText("Rename layer", l.name).then((v) => {
+            if (v === undefined) return;
+            const n = parseLabel(v);
+            if (n.ok) edit(updateLayer(project(), i, { name: n.value }));
+            else say("A name needs 1 to 40 characters");
+          });
+        },
+      },
+      ...(l.kind === "drawing"
+        ? [{ label: "Hold last drawing to the end", checked: l.holdLast, action: () => { edit(updateLayer(project(), i, { holdLast: !l.holdLast })); } }]
+        : []),
+      { label: l.visible ? "Hide" : "Show", action: () => { edit(updateLayer(project(), i, { visible: !l.visible })); } },
+      { label: l.locked ? "Unlock" : "Lock", action: () => { edit(updateLayer(project(), i, { locked: !l.locked })); } },
+      "separator",
+      ...opacities,
+      "separator",
+      { label: "Move up", disabled: i >= project().layers.length - 1, action: () => { edit(moveLayer(project(), i, i + 1), { layer: i + 1 }); } },
+      { label: "Move down", disabled: i === 0, action: () => { edit(moveLayer(project(), i, i - 1), { layer: i - 1 }); } },
+      "separator",
+      { label: "Delete layer", danger: true, disabled: l.kind === "drawing" && drawingLayers === 1, action: () => { edit(removeLayer(project(), i), { layer: Math.max(0, i - 1) }); } },
+    ];
+  };
+
+  const marks: readonly { readonly mark: Mark; readonly label: string }[] = [
+    { mark: "key", label: "Key" },
+    { mark: "breakdown", label: "Breakdown" },
+    { mark: "inbetween", label: "Inbetween" },
+    { mark: "none", label: "No mark" },
+  ];
+
+  const rangeMenu = (): MenuItem[] => {
+    const r = range();
+    if (r === undefined) return [];
+    const n = Math.abs(r.to - r.from) + 1;
+    return [
+      { label: `Loop these ${n} drawings`, action: () => { setLoopToRange(r); } },
+      { label: "Reverse", action: () => { edit(reverseRange(project(), r)); } },
+      { label: "Duplicate the run", action: () => { edit(duplicateRange(project(), r)); } },
+      { label: "Repeat ×3 (cycle)", action: () => { edit(repeatRange(project(), r, 3)); } },
+      { label: "Ping-pong cycle", action: () => { edit(pingPongRange(project(), r)); } },
+      { label: `Delete ${n} drawings`, danger: true, action: () => { edit(removeRange(project(), r), { cel: Math.min(r.from, r.to) }); } },
+      "separator",
+    ];
+  };
+
+  const celMenu = (): MenuItem[] => {
+    const c = currentCel();
+    if (c === undefined) return [];
+    const pinned = pins.has(pinKey(layerIdx, celIdx));
+    return [
+      ...rangeMenu(),
+      ...marks.map((m): MenuItem => ({ label: m.label, checked: c.mark === m.mark, action: () => { edit(setMark(project(), where(), m.mark)); } })),
+      "separator",
+      {
+        label: pinned ? "Take off the light table" : "Pin to the light table",
+        action: () => {
+          if (pinned) pins.delete(pinKey(layerIdx, celIdx));
+          else pins.add(pinKey(layerIdx, celIdx));
+          renderOnion();
+          renderTimeline();
+        },
+      },
+      { label: "Inbetween to the next drawing…", action: () => { openInbetween(); } },
+      "separator",
+      { label: "New drawing after", shortcut: "N", action: () => { edit(insertBlank(project(), where()), { cel: celIdx + 1 }); } },
+      { label: "Duplicate drawing", shortcut: "D", action: () => { edit(duplicate(project(), where()), { cel: celIdx + 1 }); } },
+      { label: "Hold one frame longer", disabled: c.hold >= 24, action: () => { stepHold(1); } },
+      { label: "Hold one frame shorter", disabled: c.hold <= 1, action: () => { stepHold(-1); } },
+      "separator",
+      { label: "Clear drawing", disabled: c.items.length === 0, action: () => { edit(clearCel(project(), where())); } },
+      { label: "Delete drawing", danger: true, disabled: (drawing()?.cels.length ?? 1) === 1, action: () => { edit(remove(project(), where()), { cel: Math.max(0, celIdx - 1) }); } },
+    ];
+  };
+
+  const cameraKeyMenu = (frame: number): MenuItem[] => [
+    { label: "Go to this key", action: () => { scrub(frame); } },
+    {
+      label: "Delete camera key",
+      danger: true,
+      action: () => {
+        const f = parseFrameIndex(frame);
+        if (f.ok) edit(removeCameraKey(project(), f.value));
+      },
+    },
+  ];
+
+  const audioMenu = (i: number): MenuItem[] => {
+    const track = project().audio[i];
+    if (track === undefined) return [];
+    const shift = (frames: number): void => {
+      const o = parseOffset(track.offset + frames);
+      if (o.ok) edit(replaceAudio(project(), makeAudioTrack(track.id, track.asset, track.name, o.value, track.volume, track.muted)));
+    };
+    return [
+      { label: track.muted ? "Unmute" : "Mute", action: () => { edit(replaceAudio(project(), makeAudioTrack(track.id, track.asset, track.name, track.offset, track.volume, !track.muted))); } },
+      { label: "Start at the playhead", action: () => { shift(t - track.offset); } },
+      { label: "Nudge one frame later", action: () => { shift(1); } },
+      { label: "Nudge one frame earlier", action: () => { shift(-1); } },
+      "separator",
+      { label: "Remove track", danger: true, action: () => { edit(removeAudio(project(), track.id)); } },
+    ];
+  };
 
   const selectionMenu = (): MenuItem[] =>
     selectTool.count === 0
@@ -810,6 +1287,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
           { label: "Flip horizontally", action: () => { selectTool.flip(); } },
           { label: "Bring to front", action: () => { selectTool.restack(true); } },
           { label: "Send to back", action: () => { selectTool.restack(false); } },
+          { label: "Move along a path…", action: () => { openPath(); } },
           { label: "Delete", shortcut: "⌫", danger: true, action: () => { selectTool.remove(); } },
           "separator",
         ];
@@ -819,10 +1297,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     { label: "Undo", shortcut: "⌘Z", disabled: !history.canUndo, action: undo },
     { label: "Redo", shortcut: "⇧⌘Z", disabled: !history.canRedo, action: redo },
     "separator",
-    { label: "Select all", shortcut: "⌘A", disabled: currentFrame().items.length === 0, action: () => { setTool("select"); selectTool.selectAll(); } },
+    { label: "Select all", shortcut: "⌘A", disabled: (currentCel()?.items.length ?? 0) === 0, action: () => { setTool("select"); selectTool.selectAll(); } },
     { label: "Paste", shortcut: "⌘V", action: () => { setTool("select"); selectTool.paste(); } },
     "separator",
-    ...frameMenu(),
+    ...celMenu(),
     "separator",
     { label: "Mirror symmetry", shortcut: "M", checked: settings.symmetry, action: () => { updateSettings("symmetry", !settings.symmetry); compositeSoon(); } },
     { label: "Onion skin", shortcut: "O", checked: settings.onion, action: () => { updateSettings("onion", !settings.onion); renderOnion(); } },
@@ -830,20 +1308,223 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     ...(fsBtn.hidden ? [] : [{ label: isFullscreen() ? "Exit fullscreen" : "Fullscreen", shortcut: "F", action: () => { void toggleFullscreen(); } }]),
   ];
 
+  const setLoopToRange = (r: Range): void => {
+    const l = drawing();
+    if (l === undefined) return;
+    const a = Math.min(r.from, r.to);
+    const b = Math.max(r.from, r.to);
+    loop = { from: celStart(l, a), to: celStart(l, b) + (l.cels[b]?.hold ?? 1) - 1 };
+    renderTimeline();
+    renderChrome();
+  };
+
+  // Camera popover: frame the shot by panning and zooming the canvas, then set a key.
+  const camEase = h("select", { class: "select" }, ...EASES.map((e) => h("option", { value: e }, { linear: "Linear", in: "Ease in", out: "Ease out", inOut: "Ease in and out" }[e])));
+  const camView = h("input", { type: "checkbox" });
+  const camSet = h("button", { type: "button", class: "btn small primary" }, "Set key from the view");
+  const camRemove = h("button", { type: "button", class: "btn small" }, "Remove key here");
+  const camPop = h(
+    "div",
+    { class: "popover", hidden: true },
+    h("div", { class: "pop-heading" }, "Camera"),
+    h("p", { class: "hint" }, "Pan and zoom the canvas to frame the shot, then set a key at the playhead. Playback moves between keys."),
+    h("label", {}, "Into the next key", camEase),
+    h("label", { class: "toggle" }, "Play through the camera", camView),
+    h("div", { class: "pop-actions" }, camRemove, camSet),
+  );
+  workspace.append(camPop);
+
+  const cameraFromView = (): Result<CameraKey> => {
+    const r = workspace.getBoundingClientRect();
+    const [cx, cy] = toCanvas(view, r.width / 2, r.height / 2);
+    // Zoom 1 shows the whole canvas; the view shows `r.width / view.scale` canvas pixels across.
+    const zoom = parseZoom(Math.max(0.1, Math.min(10, Math.max(W / (r.width / view.scale), H / (r.height / view.scale)))));
+    const frame = parseFrameIndex(t);
+    const center = parseVec([cx, cy]);
+    const ez = EASES.find((e) => e === camEase.value) ?? "inOut";
+    if (!zoom.ok) return zoom;
+    if (!frame.ok) return frame;
+    if (!center.ok) return center;
+    return ok(makeCameraKey(frame.value, center.value, zoom.value, normalizeAngle(-view.rotation), ez));
+  };
+
+  // Inbetweening and motion paths -------------------------------------------------------
+
+  const easeSelect = (): HTMLSelectElement =>
+    h("select", { class: "select" }, ...EASES.map((e) => h("option", { value: e, selected: e === "inOut" }, { linear: "Linear (even spacing)", in: "Ease in (slow start)", out: "Ease out (slow end)", inOut: "Ease in and out" }[e])));
+
+  /** A dialog of number and choice fields; resolves with the form, or undefined if cancelled. */
+  const askForm = (heading: string, intro: string, fields: readonly (readonly [string, HTMLElement])[], action: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      const cancel = h("button", { type: "button", class: "btn" }, "Cancel");
+      const go = h("button", { type: "submit", class: "btn primary" }, action);
+      const form = h(
+        "form",
+        { method: "dialog" },
+        h("div", { class: "dialog-body" }, h("h3", {}, heading), h("p", { class: "hint" }, intro), ...fields.map(([label, el]) => h("label", { class: "field" }, h("span", {}, label), el))),
+        h("div", { class: "dialog-actions" }, cancel, go),
+      );
+      const dialog = h("dialog", {}, form);
+      root.append(dialog);
+      const done = (v: boolean): void => {
+        dialog.close();
+        dialog.remove();
+        resolve(v);
+      };
+      cancel.addEventListener("click", () => {
+        done(false);
+      });
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        done(true);
+      });
+      dialog.showModal();
+    });
+
+  /** Drawings between this one and the next, made by interpolating their items. */
+  const openInbetween = (): void => {
+    const l = drawing();
+    const a = currentCel();
+    const b = l?.cels[celIdx + 1];
+    if (l === undefined || a === undefined || b === undefined) {
+      say("Select a drawing that has a next drawing to inbetween to");
+      return;
+    }
+    const count = h("input", { class: "input", type: "number", min: 1, max: 48, value: 3 });
+    const holdIn = h("input", { class: "input", type: "number", min: 1, max: 24, value: 1 });
+    const how = easeSelect();
+    void askForm(
+      `Inbetween drawing ${celIdx + 1} to ${celIdx + 2}`,
+      "Items are matched in order, so this works best on a drawing and its duplicate after moving, turning or redrawing its parts.",
+      [
+        ["Drawings in between", count],
+        ["Frames each is held", holdIn],
+        ["Spacing", how],
+      ],
+      "Make inbetweens",
+    ).then((go) => {
+      if (!go) return;
+      const hold = parseHold(Math.round(Number(holdIn.value)));
+      const ez = EASES.find((e) => e === how.value) ?? "inOut";
+      if (!hold.ok) {
+        say(hold.error);
+        return;
+      }
+      const made = inbetween(a, b, Number(count.value), ez, hold.value);
+      if (!made.ok) {
+        say(`Could not inbetween: ${made.error}`);
+        return;
+      }
+      if (edit(insertCels(project(), where(), made.value), { cel: celIdx + 1 })) say(`${made.value.length} inbetweens made`);
+    });
+  };
+
+  /** Selected items travel along a path drawn next, over new drawings after this one. */
+  let pathCapture: ((path: XY[]) => void) | undefined;
+  const openPath = (): void => {
+    const base = currentCel();
+    if (base === undefined) return;
+    if (settings.tool !== "select" || selectTool.count === 0) {
+      setTool("select");
+      say("Select what should move, then choose Move along a path again");
+      return;
+    }
+    const selected = new Set(selectTool.selectedIndices());
+    const frames = h("input", { class: "input", type: "number", min: 1, max: 240, value: project().fps });
+    const how = easeSelect();
+    const orient = h("input", { type: "checkbox" });
+    void askForm(
+      "Move along a path",
+      "Next, draw the path with the pen, starting where the selection is. New drawings are added after this one.",
+      [
+        ["Drawings (frames)", frames],
+        ["Spacing", how],
+        ["Turn with the path", orient],
+      ],
+      "Draw the path",
+    ).then((go) => {
+      if (!go) return;
+      say("Draw the path");
+      pathCapture = (path) => {
+        pathCapture = undefined;
+        const ez = EASES.find((e) => e === how.value) ?? "inOut";
+        const made = alongPath(base, selected, path, Number(frames.value), ez, orient.checked);
+        if (!made.ok) {
+          say(made.error);
+          return;
+        }
+        if (edit(insertCels(project(), where(), made.value), { cel: celIdx + 1 })) say(`${made.value.length} drawings along the path`);
+      };
+    });
+  };
+
+  /** While a path is being drawn, the pen draws a guide instead of ink. */
+  const pathTool: ToolController = (() => {
+    let pts: XY[] = [];
+    const show = (): void => {
+      host.guides((ctx, px) => {
+        ctx.save();
+        ctx.strokeStyle = "#2f6bff";
+        ctx.lineWidth = 2 * px;
+        ctx.setLineDash([8 * px, 6 * px]);
+        ctx.beginPath();
+        for (const [i, p] of pts.entries()) {
+          if (i === 0) ctx.moveTo(p[0], p[1]);
+          else ctx.lineTo(p[0], p[1]);
+        }
+        ctx.stroke();
+        ctx.restore();
+      });
+    };
+    return {
+      down: (s) => {
+        pts = [[s.x, s.y]];
+        show();
+      },
+      move: (s) => {
+        pts.push([s.x, s.y]);
+        show();
+      },
+      up: (s) => {
+        pts.push([s.x, s.y]);
+        host.guides(null);
+        const done = pathCapture;
+        if (done !== undefined) done(pts);
+        pts = [];
+      },
+      cancel: () => {
+        pts = [];
+        host.guides(null);
+      },
+      deactivate: () => {
+        pts = [];
+        pathCapture = undefined;
+        host.guides(null);
+      },
+    };
+  })();
+
   // Playback ----------------------------------------------------------------------------
 
   let raf = 0;
   const stop = (): void => {
+    if (!playing) return;
     playing = false;
     cancelAnimationFrame(raf);
+    audio.stop();
+    outputCanvas.hidden = true;
     setIcon(playBtn, "play");
     playBtn.setAttribute("aria-label", "Play");
-    renderInk();
-    renderOnion();
+    const l = drawing();
+    if (l !== undefined) celIdx = celAt(l, t) ?? l.cels.length - 1;
+    renderAll();
   };
 
   const play = (): void => {
-    if (project().frames.length < 2) {
+    const p = project();
+    const total = duration(p);
+    const span = loop ?? { from: 0, to: total - 1 };
+    if (span.to <= span.from) {
       say("Add a second drawing to play");
       return;
     }
@@ -852,31 +1533,45 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     playing = true;
     setIcon(playBtn, "pause");
     playBtn.setAttribute("aria-label", "Pause");
+    if (t < span.from || t > span.to) t = span.from;
     renderOnion();
-    const total = duration(project());
-    // Start from the current drawing.
-    let t = project().frames.slice(0, index).reduce((n, f) => n + f.hold, 0);
+    const throughCamera = settings.cameraView && p.camera.length > 0;
+    outputCanvas.hidden = !throughCamera;
+    const length = span.to - span.from + 1;
+    let pos = t - span.from;
+    let dir = 1;
     let last = performance.now();
     let shown = -1;
+    if (!settings.pingPong) audio.play(p, t, settings.speed);
     const tick = (now: number): void => {
       if (!playing) return;
-      t = (t + ((now - last) / 1000) * project().fps) % total;
+      pos += ((now - last) / 1000) * p.fps * settings.speed * dir;
       last = now;
-      let acc = 0;
-      let i = 0;
-      for (const [j, f] of project().frames.entries()) {
-        acc += f.hold;
-        if (t < acc) {
-          i = j;
-          break;
+      if (settings.pingPong) {
+        if (pos >= length - 1) {
+          pos = length - 1 - (pos - (length - 1));
+          dir = -1;
+        } else if (pos <= 0) {
+          pos = -pos;
+          dir = 1;
         }
+      } else if (pos >= length) {
+        pos %= length;
+        audio.play(p, span.from + Math.floor(pos), settings.speed);
       }
-      if (i !== shown) {
-        shown = i;
-        index = i;
-        renderInk();
+      const f = span.from + Math.max(0, Math.min(length - 1, Math.floor(pos)));
+      if (f !== shown) {
+        shown = f;
+        t = f;
+        if (throughCamera) drawOutput(outputCtx, p, t, cache, W, H);
+        else {
+          const l = drawing();
+          if (l !== undefined) celIdx = celAt(l, t) ?? l.cels.length - 1;
+          renderScene();
+          renderInk();
+        }
         renderChrome();
-        for (const [j, cell] of [...frames.children].entries()) cell.setAttribute("aria-current", String(j === i));
+        renderTimeline();
       }
       raf = requestAnimationFrame(tick);
     };
@@ -1184,18 +1879,57 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   selBack.addEventListener("click", () => { selectTool.restack(false); }, opts);
   selDelete.addEventListener("click", () => { selectTool.remove(); }, opts);
 
-  prevBtn.addEventListener("click", () => { select(index - 1); }, opts);
-  nextBtn.addEventListener("click", () => { select(index + 1); }, opts);
+  prevBtn.addEventListener("click", () => { selectCel(layerIdx, celIdx - 1, false); }, opts);
+  nextBtn.addEventListener("click", () => { selectCel(layerIdx, celIdx + 1, false); }, opts);
   playBtn.addEventListener("click", () => { if (playing) stop(); else play(); }, opts);
   fpsSelect.addEventListener("change", () => {
     const f = parseFps(Number(fpsSelect.value));
     if (f.ok) edit(setFps(project(), f.value));
   }, opts);
+  speedSelect.addEventListener("change", () => {
+    const s = SPEEDS.find((x) => x === Number(speedSelect.value));
+    if (s !== undefined) updateSettings("speed", s);
+  }, opts);
+  loopBtn.addEventListener("click", () => { toggleLoop(); }, opts);
   holdDown.addEventListener("click", () => { stepHold(-1); }, opts);
   holdUp.addEventListener("click", () => { stepHold(1); }, opts);
-  addBtn.addEventListener("click", () => { edit(insertBlank(project(), index), index + 1); }, opts);
-  dupBtn.addEventListener("click", () => { edit(duplicate(project(), index), index + 1); }, opts);
-  delBtn.addEventListener("click", () => { edit(remove(project(), index), index - 1 < 0 ? 0 : index - 1); }, opts);
+  addBtn.addEventListener("click", () => { edit(insertBlank(project(), where()), { cel: celIdx + 1 }); }, opts);
+  dupBtn.addEventListener("click", () => { edit(duplicate(project(), where()), { cel: celIdx + 1 }); }, opts);
+  delBtn.addEventListener("click", () => { edit(remove(project(), where()), { cel: Math.max(0, celIdx - 1) }); }, opts);
+  layerAddBtn.addEventListener("click", (e) => { openMenu(e.clientX, e.clientY - 8, addMenu()); }, opts);
+  tweenBtn.addEventListener("click", () => { openInbetween(); }, opts);
+  pathBtn.addEventListener("click", () => { openPath(); }, opts);
+  cameraBtn.addEventListener("click", () => {
+    camView.checked = settings.cameraView;
+    camRemove.disabled = !project().camera.some((k) => k.frame === t);
+    openPopover(camPop, cameraBtn);
+  }, opts);
+  camView.addEventListener("change", () => { updateSettings("cameraView", camView.checked); }, opts);
+  camSet.addEventListener("click", () => {
+    const k = cameraFromView();
+    if (!k.ok) {
+      say(k.error);
+      return;
+    }
+    if (edit(setCameraKey(project(), k.value))) say(`Camera key at frame ${t + 1}`);
+    closePopovers();
+  }, opts);
+  camRemove.addEventListener("click", () => {
+    const f = parseFrameIndex(t);
+    if (f.ok) edit(removeCameraKey(project(), f.value));
+    closePopovers();
+  }, opts);
+  onionTint.addEventListener("change", () => { updateSettings("onionMode", onionTint.checked ? "tint" : "original"); renderOnion(); }, opts);
+  onionKeys.addEventListener("change", () => { updateSettings("onionKeys", onionKeys.checked); renderOnion(); }, opts);
+  for (const track of initial.audio) void audio.load(track.asset).then(() => { renderTimeline(); });
+
+  /** Loop the selected run, or the drawing under the playhead; again to stop looping. */
+  const toggleLoop = (): void => {
+    if (loop !== undefined) loop = undefined;
+    else setLoopToRange(range() ?? { layer: layerIdx, from: celIdx, to: Math.min(celIdx + 1, (drawing()?.cels.length ?? 1) - 1) });
+    renderTimeline();
+    renderChrome();
+  };
 
   document.addEventListener(
     "keydown",
@@ -1252,16 +1986,36 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
           compositeSoon();
           return;
         case ",":
-          select(index - 1);
+          selectCel(layerIdx, Math.max(0, celIdx - 1), false);
           return;
         case ".":
-          select(index + 1);
+          selectCel(layerIdx, Math.min((drawing()?.cels.length ?? 1) - 1, celIdx + 1), false);
           return;
+        case "arrowleft":
+          e.preventDefault();
+          scrub(t - 1);
+          return;
+        case "arrowright":
+          e.preventDefault();
+          scrub(t + 1);
+          return;
+        case "l":
+          toggleLoop();
+          return;
+        case "p": {
+          const key = pinKey(layerIdx, celIdx);
+          if (pins.has(key)) pins.delete(key);
+          else pins.add(key);
+          renderOnion();
+          renderTimeline();
+          say(pins.has(key) ? "Pinned to the light table" : "Off the light table");
+          return;
+        }
         case "n":
-          edit(insertBlank(project(), index), index + 1);
+          edit(insertBlank(project(), where()), { cel: celIdx + 1 });
           return;
         case "d":
-          edit(duplicate(project(), index), index + 1);
+          edit(duplicate(project(), where()), { cel: celIdx + 1 });
           return;
         case "f":
           if (!fsBtn.hidden) void toggleFullscreen();
@@ -1272,7 +2026,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         case "backspace":
         case "delete":
           if (selectTool.count > 0) selectTool.remove();
-          else edit(clearFrame(project(), index));
+          else edit(clearCel(project(), where()));
           return;
         case "[":
         case "]": {

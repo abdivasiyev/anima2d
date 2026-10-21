@@ -9,7 +9,7 @@
  */
 import { getStroke } from "perfect-freehand";
 
-import type { BrushKind, Frame, ItemFields, Point, ScatterKind } from "../domain/project";
+import type { BrushKind, Cel, ItemFields, Point, ScatterKind } from "../domain/project";
 import { shapeCorners } from "./geometry";
 
 /** Either kind of 2D context: on-screen canvases and off-screen layers share every call used here. */
@@ -424,14 +424,14 @@ export class LayeredFrame {
 }
 
 /** Clear `ctx` and draw a whole drawing through `layers`. */
-export const drawFrame = (ctx: Ctx, frame: Frame, layers: LayeredFrame, opts: DrawOptions = {}): void => {
+export const drawFrame = (ctx: Ctx, frame: Cel, layers: LayeredFrame, opts: DrawOptions = {}): void => {
   layers.render(frame.items, opts);
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   layers.composite(ctx);
 };
 
 /** `frame` drawn small on white paper, for the timeline. */
-export const drawThumbnail = (ctx: Ctx, frame: Frame, canvasW: number, canvasH: number): void => {
+export const drawThumbnail = (ctx: Ctx, frame: Cel, canvasW: number, canvasH: number): void => {
   const { width, height } = ctx.canvas;
   const k = Math.min(width / canvasW, height / canvasH);
   const w = Math.max(1, Math.ceil(canvasW * k));
