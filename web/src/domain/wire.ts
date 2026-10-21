@@ -1,4 +1,4 @@
-import { err, ok, type Result } from "./result";
+import { at, err, ok, type Result } from "./result";
 
 /**
  * Reading `unknown` JSON one shape at a time. Every parser in src/domain starts here;
@@ -35,4 +35,31 @@ export const decodeJson = (text: string): Result<unknown> => {
   } catch {
     return err("expected JSON");
   }
+};
+
+/**
+ * Do-notation for `Result`, without a cast: inside `parseWith`, `yield* field(...)` gives
+ * the parsed value or stops the whole parse at the first rejection, like Haskell's `do`.
+ */
+export function* field<T>(o: Fields, name: string, parse: (raw: unknown) => Result<T>): Generator<Result<never>, T, unknown> {
+  const r = at(name, parse(o[name]));
+  if (!r.ok) {
+    yield r;
+    throw new Error("unreachable: a parse is never resumed after a rejection");
+  }
+  return r.value;
+}
+
+/** The same for a `Result` already in hand. */
+export function* bind<T>(r: Result<T>): Generator<Result<never>, T, unknown> {
+  if (!r.ok) {
+    yield r;
+    throw new Error("unreachable: a parse is never resumed after a rejection");
+  }
+  return r.value;
+}
+
+export const parseWith = <T>(body: () => Generator<Result<never>, Result<T>, unknown>): Result<T> => {
+  const step = body().next();
+  return step.value;
 };

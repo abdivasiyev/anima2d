@@ -1,25 +1,63 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
+import v1Raw from "../../../fixtures/project-v1.json?raw";
+import v1UpgradedRaw from "../../../fixtures/project-v1-upgraded.json?raw";
+import v2Raw from "../../../fixtures/project-v2.json?raw";
+import rejectionsRaw from "../../../fixtures/rejections.json?raw";
 import { parseColor, parseHeight, parseProject, parseProjectId, parseProjectName, parseWidth, unparseProject } from "./project";
+import { unwrap } from "./result";
+import { array, decodeJson, object, string } from "./wire";
 
-const rawPoint = fc.tuple(fc.double({ min: -5000, max: 5000, noNaN: true }), fc.double({ min: -5000, max: 5000, noNaN: true }), fc.double({ min: 0, max: 1, noNaN: true }));
+const coord = fc.double({ min: -5000, max: 5000, noNaN: true });
+const pressure = fc.double({ min: 0, max: 1, noNaN: true });
+const color = fc.stringMatching(/^#[0-9a-f]{6}$/);
+const size = fc.double({ min: 0.5, max: 200, noNaN: true });
+const opacity = fc.double({ min: 0.05, max: 1, noNaN: true });
+const layer = fc.constantFrom("line", "color");
+const points = fc.array(fc.tuple(coord, coord, pressure), { minLength: 1, maxLength: 8 });
+const vec = fc.tuple(coord, coord);
 
-const rawStroke = fc.record({
-  tool: fc.constantFrom("pen", "eraser"),
-  color: fc.stringMatching(/^#[0-9a-f]{6}$/),
-  size: fc.double({ min: 0.5, max: 200, noNaN: true }),
-  points: fc.array(rawPoint, { minLength: 1, maxLength: 12 }),
-});
+const item = fc.oneof(
+  fc.record({ kind: fc.constant("stroke"), layer, brush: fc.constantFrom("pen", "pencil", "marker", "paint"), color, size, opacity, points }),
+  fc.record({ kind: fc.constant("erase"), size, points }),
+  fc.record({
+    kind: fc.constant("scatter"),
+    layer,
+    brush: fc.constantFrom("grass", "birds", "stars", "leaves", "flowers", "spray"),
+    color,
+    size,
+    opacity,
+    seed: fc.integer({ min: 0, max: 2147483647 }),
+    points,
+  }),
+  fc.record({
+    kind: fc.constant("shape"),
+    layer,
+    shape: fc.constantFrom("line", "rect", "ellipse", "triangle"),
+    color,
+    size,
+    opacity,
+    fill: fc.option(color, { nil: null }),
+    center: vec,
+    width: fc.double({ min: 0, max: 200000, noNaN: true }),
+    height: fc.double({ min: 0, max: 200000, noNaN: true }),
+    rotation: fc.double({ min: -Math.PI, max: Math.PI, noNaN: true }),
+  }),
+  fc.record({ kind: fc.constant("curve"), layer, color, size, opacity, points: fc.tuple(vec, vec, vec) }),
+  fc.record({ kind: fc.constant("fill"), layer, color, opacity, polygons: fc.array(fc.array(vec, { minLength: 3, maxLength: 6 }), { minLength: 1, maxLength: 3 }) }),
+);
 
 const rawProject = fc.record({
-  format: fc.constant(1),
+  format: fc.constant(2),
   id: fc.stringMatching(/^[a-z0-9-]{1,64}$/),
   name: fc.stringMatching(/^[A-Za-z0-9][A-Za-z0-9 ]{0,78}[A-Za-z0-9]$/),
   canvas: fc.record({ width: fc.integer({ min: 32, max: 3840 }).map((n) => n * 2), height: fc.integer({ min: 32, max: 3840 }).map((n) => n * 2) }),
   fps: fc.constantFrom(12, 24, 25, 30, 48, 50, 60),
-  frames: fc.array(fc.record({ hold: fc.integer({ min: 1, max: 24 }), strokes: fc.array(rawStroke, { maxLength: 3 }) }), { minLength: 1, maxLength: 4 }),
+  frames: fc.array(fc.record({ hold: fc.integer({ min: 1, max: 24 }), items: fc.array(item, { maxLength: 4 }) }), { minLength: 1, maxLength: 3 }),
 });
+
+const fixture = (raw: string): unknown => unwrap(decodeJson(raw));
 
 describe("Project", () => {
   it("parse ∘ unparse is the identity on what parse accepts", () => {
@@ -33,35 +71,36 @@ describe("Project", () => {
     );
   });
 
-  it("reads the same shape the Haskell server writes", () => {
+  it("writes back exactly the format 2 it read", () => {
     fc.assert(
       fc.property(rawProject, (raw) => {
         const p = parseProject(raw);
-        if (p.ok) expect(unparseProject(p.value)).toEqual({ ...raw, frames: raw.frames.map((f) => ({ ...f, strokes: f.strokes.map((s) => ({ ...s })) })) });
+        if (p.ok) expect(unparseProject(p.value)).toEqual(raw);
       }),
     );
   });
+});
 
-  it("rejects an unknown format and an empty timeline", () => {
-    fc.assert(
-      fc.property(rawProject, (raw) => {
-        expect(parseProject({ ...raw, format: 2 }).ok).toBe(false);
-        expect(parseProject({ ...raw, frames: [] }).ok).toBe(false);
-      }),
-    );
+// The same files drive the Haskell suite (test/Anima/FixtureSpec.hs): both sides must
+// accept, upgrade and reject alike, word for word.
+describe("shared fixtures", () => {
+  it("a format 2 project with every kind of item round-trips", () => {
+    const raw = fixture(v2Raw);
+    expect(unparseProject(unwrap(parseProject(raw)))).toEqual(raw);
   });
 
-  it("names where a nested rejection happened, word for word as the server does", () => {
-    const r = parseProject({
-      format: 1,
-      id: "a",
-      name: "A",
-      canvas: { width: 1920, height: 1080 },
-      fps: 24,
-      frames: [{ hold: 1, strokes: [{ tool: "brush", color: "#000000", size: 4, points: [[0, 0, 1]] }] }],
+  it("a format 1 project upgrades to format 2", () => {
+    expect(unparseProject(unwrap(parseProject(fixture(v1Raw))))).toEqual(fixture(v1UpgradedRaw));
+  });
+
+  const cases = unwrap(array(fixture(rejectionsRaw)));
+  for (const c of cases) {
+    const o = unwrap(object(c));
+    const name = unwrap(string(o.name));
+    it(`rejects: ${name}`, () => {
+      expect(parseProject(o.input)).toEqual({ ok: false, error: unwrap(string(o.error)) });
     });
-    expect(r).toEqual({ ok: false, error: 'frames: 0: strokes: 0: tool: expected a tool of "pen" or "eraser"' });
-  });
+  }
 });
 
 describe("values", () => {

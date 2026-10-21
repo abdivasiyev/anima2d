@@ -1,0 +1,52 @@
+{
+ "format": 2,
+ "id": "fixture-v1",
+ "name": "Old project",
+ "canvas": {
+  "width": 1920,
+  "height": 1080
+ },
+ "fps": 24,
+ "frames": [
+  {
+   "hold": 2,
+   "items": [
+    {
+     "kind": "stroke",
+     "layer": "line",
+     "brush": "pen",
+     "color": "#1c1c1e",
+     "size": 6,
+     "opacity": 1,
+     "points": [
+      [
+       10,
+       20,
+       0.5
+      ],
+      [
+       30,
+       40,
+       0.75
+      ]
+     ]
+    },
+    {
+     "kind": "erase",
+     "size": 12,
+     "points": [
+      [
+       15,
+       25,
+       1
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "hold": 1,
+   "items": []
+  }
+ ]
+}

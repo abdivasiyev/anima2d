@@ -27,7 +27,7 @@
 
         backendSrc = lib.fileset.toSource {
           root = ./.;
-          fileset = lib.fileset.unions [./app ./src ./test ./anima2d.cabal ./CHANGELOG.md ./LICENSE];
+          fileset = lib.fileset.unions [./app ./src ./test ./fixtures ./anima2d.cabal ./CHANGELOG.md ./LICENSE];
         };
 
         backend = pkgs.haskell.lib.overrideCabal (hpkgs.callCabal2nix "anima2d" backendSrc {}) {
@@ -42,10 +42,15 @@
         web = pkgs.buildNpmPackage {
           pname = "anima2d-web";
           version = backend.version;
+          # The shared parser fixtures sit beside web/, and its specs read them.
           src = lib.fileset.toSource {
-            root = ./web;
-            fileset = lib.fileset.difference ./web (lib.fileset.maybeMissing ./web/node_modules);
+            root = ./.;
+            fileset = lib.fileset.unions [
+              (lib.fileset.difference ./web (lib.fileset.unions [(lib.fileset.maybeMissing ./web/node_modules) (lib.fileset.maybeMissing ./web/dist)]))
+              ./fixtures
+            ];
           };
+          sourceRoot = "source/web";
           # Refresh with `just npm-hash` after changing web/package-lock.json.
           npmDepsHash = lib.fileContents ./web/npm-deps.hash;
           npmBuildScript = "build";

@@ -1,0 +1,908 @@
+[
+ {
+  "name": "unknown format",
+  "input": {
+   "format": 3,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#f4d6c1",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          0,
+          0
+         ],
+         [
+          100,
+          0
+         ],
+         [
+          100,
+          100
+         ],
+         [
+          0,
+          100
+         ]
+        ],
+        [
+         [
+          40,
+          40
+         ],
+         [
+          60,
+          40
+         ],
+         [
+          60,
+          60
+         ]
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "color",
+       "brush": "paint",
+       "color": "#9fc7e8",
+       "size": 40,
+       "opacity": 0.5,
+       "points": [
+        [
+         5,
+         5,
+         0.2
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pencil",
+       "color": "#1c1c1e",
+       "size": 3.5,
+       "opacity": 0.9,
+       "points": [
+        [
+         1,
+         2,
+         0
+        ],
+        [
+         3,
+         4,
+         1
+        ]
+       ]
+      },
+      {
+       "kind": "scatter",
+       "layer": "line",
+       "brush": "grass",
+       "color": "#4f9a55",
+       "size": 18,
+       "opacity": 1,
+       "seed": 123456,
+       "points": [
+        [
+         0,
+         500,
+         0.6
+        ],
+        [
+         300,
+         520,
+         0.8
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": null,
+       "center": [
+        540,
+        960
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 0.5
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "rect",
+       "color": "#2f6bff",
+       "size": 2,
+       "opacity": 0.75,
+       "fill": "#2f6bff",
+       "center": [
+        -50,
+        -50
+       ],
+       "width": 0,
+       "height": 10,
+       "rotation": -3.14159
+      },
+      {
+       "kind": "curve",
+       "layer": "line",
+       "color": "#6b4fd8",
+       "size": 8,
+       "opacity": 1,
+       "points": [
+        [
+         0,
+         0
+        ],
+        [
+         50,
+         -80
+        ],
+        [
+         100,
+         0
+        ]
+       ]
+      },
+      {
+       "kind": "erase",
+       "size": 20,
+       "points": [
+        [
+         50,
+         50,
+         1
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "format: expected project format 1 or 2"
+ },
+ {
+  "name": "odd width",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1081,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#f4d6c1",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          0,
+          0
+         ],
+         [
+          100,
+          0
+         ],
+         [
+          100,
+          100
+         ],
+         [
+          0,
+          100
+         ]
+        ],
+        [
+         [
+          40,
+          40
+         ],
+         [
+          60,
+          40
+         ],
+         [
+          60,
+          60
+         ]
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "color",
+       "brush": "paint",
+       "color": "#9fc7e8",
+       "size": 40,
+       "opacity": 0.5,
+       "points": [
+        [
+         5,
+         5,
+         0.2
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pencil",
+       "color": "#1c1c1e",
+       "size": 3.5,
+       "opacity": 0.9,
+       "points": [
+        [
+         1,
+         2,
+         0
+        ],
+        [
+         3,
+         4,
+         1
+        ]
+       ]
+      },
+      {
+       "kind": "scatter",
+       "layer": "line",
+       "brush": "grass",
+       "color": "#4f9a55",
+       "size": 18,
+       "opacity": 1,
+       "seed": 123456,
+       "points": [
+        [
+         0,
+         500,
+         0.6
+        ],
+        [
+         300,
+         520,
+         0.8
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": null,
+       "center": [
+        540,
+        960
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 0.5
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "rect",
+       "color": "#2f6bff",
+       "size": 2,
+       "opacity": 0.75,
+       "fill": "#2f6bff",
+       "center": [
+        -50,
+        -50
+       ],
+       "width": 0,
+       "height": 10,
+       "rotation": -3.14159
+      },
+      {
+       "kind": "curve",
+       "layer": "line",
+       "color": "#6b4fd8",
+       "size": 8,
+       "opacity": 1,
+       "points": [
+        [
+         0,
+         0
+        ],
+        [
+         50,
+         -80
+        ],
+        [
+         100,
+         0
+        ]
+       ]
+      },
+      {
+       "kind": "erase",
+       "size": 20,
+       "points": [
+        [
+         50,
+         50,
+         1
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "canvas: width: expected an even width"
+ },
+ {
+  "name": "no frames",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": []
+  },
+  "error": "frames: expected 1 to 10000 frames"
+ },
+ {
+  "name": "unknown item kind",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "blob"
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: kind: expected an item kind of \"stroke\", \"erase\", \"scatter\", \"shape\", \"curve\" or \"fill\""
+ },
+ {
+  "name": "missing kind",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {}
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: kind: expected an item kind of \"stroke\", \"erase\", \"scatter\", \"shape\", \"curve\" or \"fill\""
+ },
+ {
+  "name": "bad layer",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "top",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": null,
+       "center": [
+        540,
+        960
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 0.5
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: layer: expected a layer of \"line\" or \"color\""
+ },
+ {
+  "name": "bad brush",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "crayon"
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: brush: expected a brush of \"pen\", \"pencil\", \"marker\" or \"paint\""
+ },
+ {
+  "name": "bad scatter",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "scatter",
+       "layer": "line",
+       "brush": "cats"
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: brush: expected a scatter brush of \"grass\", \"birds\", \"stars\", \"leaves\", \"flowers\" or \"spray\""
+ },
+ {
+  "name": "opacity too low",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 0.01,
+       "fill": null,
+       "center": [
+        540,
+        960
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 0.5
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: opacity: expected an opacity from 0.05 to 1"
+ },
+ {
+  "name": "fill not a colour",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": "red",
+       "center": [
+        540,
+        960
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 0.5
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: fill: expected a colour as #rrggbb or null"
+ },
+ {
+  "name": "rotation out of range",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": null,
+       "center": [
+        540,
+        960
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 4
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: rotation: expected an angle from -pi to pi"
+ },
+ {
+  "name": "centre off the world",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": null,
+       "center": [
+        200000,
+        0
+       ],
+       "width": 200,
+       "height": 120,
+       "rotation": 0.5
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: center: expected a position as [x, y] within 100000 pixels of the origin"
+ },
+ {
+  "name": "negative width",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#c2413b",
+       "size": 4,
+       "opacity": 1,
+       "fill": null,
+       "center": [
+        540,
+        960
+       ],
+       "width": -1,
+       "height": 120,
+       "rotation": 0.5
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: width: expected a size from 0 to 200000 pixels"
+ },
+ {
+  "name": "seed not whole",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "scatter",
+       "layer": "line",
+       "brush": "stars",
+       "color": "#ffffff",
+       "size": 4,
+       "opacity": 1,
+       "seed": 1.5,
+       "points": [
+        [
+         0,
+         0,
+         1
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: seed: expected a whole number"
+ },
+ {
+  "name": "curve with two points",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "curve",
+       "layer": "line",
+       "color": "#000000",
+       "size": 2,
+       "opacity": 1,
+       "points": [
+        [
+         0,
+         0
+        ],
+        [
+         1,
+         1
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: points: expected a curve as [start, control, end]"
+ },
+ {
+  "name": "fill polygon of two points",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#000000",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: polygons: 0: expected 3 to 20000 points"
+ },
+ {
+  "name": "stroke without points",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#000000",
+       "size": 2,
+       "opacity": 1,
+       "points": []
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: points: expected 1 to 20000 points"
+ },
+ {
+  "name": "pressure above one",
+  "input": {
+   "format": 2,
+   "id": "fixture-v2",
+   "name": "Every item",
+   "canvas": {
+    "width": 1080,
+    "height": 1920
+   },
+   "fps": 12,
+   "frames": [
+    {
+     "hold": 1,
+     "items": [
+      {
+       "kind": "erase",
+       "size": 2,
+       "points": [
+        [
+         0,
+         0,
+         2
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: items: 0: points: 0: expected a pressure from 0 to 1"
+ },
+ {
+  "name": "format 1 unknown tool",
+  "input": {
+   "format": 1,
+   "id": "fixture-v1",
+   "name": "Old project",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "frames": [
+    {
+     "hold": 1,
+     "strokes": [
+      {
+       "tool": "brush",
+       "color": "#000000",
+       "size": 4,
+       "points": [
+        [
+         0,
+         0,
+         1
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  "error": "frames: 0: strokes: 0: tool: expected a tool of \"pen\" or \"eraser\""
+ }
+]

@@ -16,7 +16,7 @@ import {
   type Project,
   type ProjectId,
   type ProjectName,
-  type Stroke,
+  type Item,
 } from "./project";
 
 const ONE: Hold = unwrap(parseHold(1));
@@ -34,14 +34,18 @@ const frameAt = (p: Project, index: number): Result<Frame> => {
 export const newProject = (id: ProjectId, name: ProjectName, canvas: Canvas, fps: Fps): Project =>
   unwrap(andThen(makeFrame(ONE, []), (blank) => makeProject(id, name, canvas, fps, [blank])));
 
-export const addStroke = (p: Project, index: number, stroke: Stroke): Result<Project> =>
-  andThen(frameAt(p, index), (f) => andThen(makeFrame(f.hold, [...f.strokes, stroke]), (next) => replaceFrame(p, index, next)));
+/** Put `items` on top of the drawing at `index`. */
+export const addItems = (p: Project, index: number, items: readonly Item[]): Result<Project> =>
+  andThen(frameAt(p, index), (f) => andThen(makeFrame(f.hold, [...f.items, ...items]), (next) => replaceFrame(p, index, next)));
 
-export const clearFrame = (p: Project, index: number): Result<Project> =>
-  andThen(frameAt(p, index), (f) => andThen(makeFrame(f.hold, []), (next) => replaceFrame(p, index, next)));
+/** Replace the drawing's items wholesale: object erasing, moving, recolouring, reordering. */
+export const setItems = (p: Project, index: number, items: readonly Item[]): Result<Project> =>
+  andThen(frameAt(p, index), (f) => andThen(makeFrame(f.hold, items), (next) => replaceFrame(p, index, next)));
+
+export const clearFrame = (p: Project, index: number): Result<Project> => setItems(p, index, []);
 
 export const setHold = (p: Project, index: number, hold: Hold): Result<Project> =>
-  andThen(frameAt(p, index), (f) => andThen(makeFrame(hold, f.strokes), (next) => replaceFrame(p, index, next)));
+  andThen(frameAt(p, index), (f) => andThen(makeFrame(hold, f.items), (next) => replaceFrame(p, index, next)));
 
 /** Insert a blank drawing after `index`. */
 export const insertBlank = (p: Project, index: number): Result<Project> =>

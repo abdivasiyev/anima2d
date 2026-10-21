@@ -2,44 +2,64 @@
  * The editor: canvas, tool rail, timeline.
  *
  * Input is split by device before anything else happens. A pen (or a mouse) is parsed
- * into `PenSample`s and draws; a touch can never become one, so fingers and a resting
- * palm only ever pan, zoom, rotate, or tap for undo and redo.
+ * into `PenSample`s and goes to the current tool; a touch can never become one, so
+ * fingers and a resting palm only ever pan, zoom, rotate, or tap for undo and redo.
  */
 import { saveProject } from "../api";
-import { addStroke, clearFrame, duplicate, insertBlank, remove, rename, setFps, setHold } from "../domain/edit";
+import { clearFrame, duplicate, insertBlank, remove, rename, setFps, setHold } from "../domain/edit";
 import { parsePenSample, type PenSample } from "../domain/pen";
 import {
+  BRUSHES,
   FPS_VALUES,
+  SCATTERS,
   duration,
-  makeStroke,
   parseBrushSize,
   parseColor,
   parseFps,
   parseHold,
-  parsePoint,
+  parseOpacity,
   parseProjectName,
+  type Color,
   type Frame,
-  type Point,
+  type ItemFields,
   type Project,
 } from "../domain/project";
-import { andThen, type Result } from "../domain/result";
+import { type Result } from "../domain/result";
 import { decodeJson } from "../domain/wire";
 import {
-  DEFAULT_SETTINGS,
+  ERASERS,
+  GAPS,
+  SHAPE_TOOLS,
   parseOnionRange,
   parseSettings,
   parseStabilizer,
+  activeSize,
+  sizeKey,
   unparseSettings,
   withSetting,
   type Settings,
+  type SettingsFields,
+  type Tool,
 } from "../domain/settings";
+import { FILL_RASTER, rasterFromAlpha, type Raster } from "../editor/fill";
 import { History } from "../editor/history";
-import { drawFrame, drawLive, drawThumbnail } from "../editor/render";
-import { Smoother, type Sample } from "../editor/stabilizer";
+import { LayeredFrame, drawThumbnail, type Ctx } from "../editor/render";
+import type { Sample } from "../editor/stabilizer";
+import {
+  CurveTool,
+  EyedropperTool,
+  FillTool,
+  FreehandTool,
+  ObjectEraserTool,
+  SelectTool,
+  ShapeDrawTool,
+  type ToolController,
+  type ToolHost,
+} from "../editor/tools";
 import { clampScale, cssTransform, fit, pinch, snapRotation, toCanvas, type View } from "../editor/view";
 import { h } from "./dom";
 import { fullscreenSupported, isFullscreen, onFullscreenChange, runningAsApp, toggleFullscreen } from "./fullscreen";
-import { iconButton, setIcon } from "./icons";
+import { icon, iconButton, setIcon, type IconName } from "./icons";
 import { closeMenu, openMenu, type MenuItem } from "./menu";
 
 const SETTINGS_KEY = "anima2d.settings";
@@ -52,18 +72,24 @@ const LONG_PRESS_MS = 500;
 const PALETTE = [
   "#1c1c1e", "#5c5c63", "#a1a1a8", "#ffffff", "#c2413b", "#e07b39",
   "#e8b931", "#4f9a55", "#2f8f8b", "#2f6bff", "#6b4fd8", "#c24f8c",
+  "#f4d6c1", "#8a5a3c", "#9fc7e8", "#3e6b48",
 ] as const;
 
+const BRUSH_LABELS: Record<(typeof BRUSHES)[number], string> = { pen: "Pen", pencil: "Pencil", marker: "Marker", paint: "Paint (under lines)" };
+const SCATTER_LABELS: Record<(typeof SCATTERS)[number], string> = { grass: "Grass", birds: "Birds", stars: "Stars", leaves: "Leaves", flowers: "Flowers", spray: "Spray" };
+const SHAPE_LABELS: Record<(typeof SHAPE_TOOLS)[number], string> = { line: "Line", curve: "Curve", rect: "Rectangle", ellipse: "Ellipse", triangle: "Triangle" };
+const ERASER_LABELS: Record<(typeof ERASERS)[number], string> = { pixel: "Pixel eraser", object: "Object eraser" };
+const GAP_LABELS: Record<(typeof GAPS)[number], string> = { 0: "No gap closing", 4: "Close small gaps", 10: "Close medium gaps", 20: "Close large gaps" };
+
+const TOOL_KEYS: Record<string, Tool> = { v: "select", b: "brush", g: "scatter", e: "eraser", u: "shape", k: "fill", i: "eyedropper" };
+
 const loadSettings = (): Settings => {
-  const fallback = parseSettings(DEFAULT_SETTINGS);
-  if (!fallback.ok) throw new Error(`default settings: ${fallback.error}`);
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
-    if (stored === null) return fallback.value;
-    const parsed = andThen(decodeJson(stored), parseSettings);
-    return parsed.ok ? parsed.value : fallback.value;
+    const raw = stored === null ? undefined : decodeJson(stored);
+    return parseSettings(raw?.ok === true ? raw.value : undefined);
   } catch {
-    return fallback.value;
+    return parseSettings(undefined);
   }
 };
 
@@ -83,12 +109,23 @@ const coalesced = (e: PointerEvent): PointerEvent[] => {
   return all.length > 0 ? all : [e];
 };
 
-const canvas2d = (w: number, hgt: number, cls: string): [HTMLCanvasElement, CanvasRenderingContext2D] => {
+const canvas2d = (w: number, hgt: number, cls: string, options?: CanvasRenderingContext2DSettings): [HTMLCanvasElement, CanvasRenderingContext2D] => {
   const c = h("canvas", { class: cls, width: w, height: hgt });
-  const ctx = c.getContext("2d");
+  const ctx = c.getContext("2d", options);
   if (ctx === null) throw new Error("this browser cannot draw on a canvas");
   return [c, ctx];
 };
+
+/** Pointer capture is best effort: a pointer that has already gone must not abort the handler. */
+const capture = (el: HTMLElement, pointerId: number): void => {
+  try {
+    el.setPointerCapture(pointerId);
+  } catch {
+    // The pointer ended before capture; there is nothing left to capture.
+  }
+};
+
+const toHex = (n: number): string => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, "0");
 
 interface Touch {
   x: number;
@@ -112,6 +149,8 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   let index = 0;
   let view: View = { tx: 0, ty: 0, scale: 1, rotation: 0 };
   let playing = false;
+  let shiftHeld = false;
+  let spaceHeld = false;
 
   const W = initial.canvas.width;
   const H = initial.canvas.height;
@@ -119,27 +158,45 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   // Layout ------------------------------------------------------------------------------
 
   const [onionCanvas, onionCtx] = canvas2d(W, H, "onion");
-  const [inkCanvas, inkCtx] = canvas2d(W, H, "ink");
-  const [liveCanvas, liveCtx] = canvas2d(W, H, "live");
-  const stage = h("div", { class: "stage" }, onionCanvas, inkCanvas, liveCanvas);
+  const [inkCanvas, inkCtx] = canvas2d(W, H, "ink", { willReadFrequently: true });
+  const [guideCanvas, guideCtx] = canvas2d(W, H, "live");
+  const stage = h("div", { class: "stage" }, onionCanvas, inkCanvas, guideCanvas);
   stage.style.width = `${W}px`;
   stage.style.height = `${H}px`;
 
   const back = iconButton("back", "Projects");
   const title = h("input", { class: "title-input", value: initial.name, maxlength: 80, spellcheck: "false", "aria-label": "Project name" });
   const saveState = h("span", { class: "save-state", "data-state": "saved" }, SAVE_LABELS.saved);
-  const zoomLabel = h("button", { type: "button", class: "btn hide-narrow", title: "Fit to screen (0)" }, "100%");
-  zoomLabel.style.height = "32px";
-  zoomLabel.style.minWidth = "64px";
-  zoomLabel.style.fontVariantNumeric = "tabular-nums";
+  const zoomLabel = h("button", { type: "button", class: "btn zoom hide-narrow", title: "Fit to screen (0)" }, "100%");
+  const symmetryBtn = iconButton("symmetry", "Mirror symmetry", "M");
   const undoBtn = iconButton("undo", "Undo", "⌘Z");
   const redoBtn = iconButton("redo", "Redo", "⇧⌘Z");
   const fsBtn = iconButton("fullscreen", "Fullscreen", "F");
   fsBtn.hidden = !fullscreenSupported() || runningAsApp();
-  const topbar = h("header", { class: "topbar" }, back, title, saveState, h("div", { class: "spacer" }), zoomLabel, h("div", { class: "sep" }), undoBtn, redoBtn, fsBtn);
+  const topbar = h(
+    "header",
+    { class: "topbar" },
+    back,
+    title,
+    saveState,
+    h("div", { class: "spacer" }),
+    zoomLabel,
+    symmetryBtn,
+    h("div", { class: "sep" }),
+    undoBtn,
+    redoBtn,
+    fsBtn,
+  );
 
-  const penBtn = iconButton("pen", "Pen", "B");
-  const eraserBtn = iconButton("eraser", "Eraser", "E");
+  // Tool rail.
+  const toolButtons: Record<Exclude<Tool, "eyedropper">, HTMLButtonElement> = {
+    select: iconButton("select", "Select and move", "V"),
+    brush: iconButton("pen", "Brush", "B"),
+    scatter: iconButton("grass", "Scatter brush", "G"),
+    eraser: iconButton("eraser", "Eraser", "E"),
+    shape: iconButton("line", "Shapes", "U"),
+    fill: iconButton("fill", "Fill", "K"),
+  };
   const swatchDot = h("span", {});
   const swatch = h("button", { type: "button", class: "swatch", "aria-label": "Colour", title: "Colour" }, swatchDot);
   const sizeFill = h("div", { class: "fill" });
@@ -147,9 +204,25 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   const sizeSlider = h("div", { class: "vslider", role: "slider", "aria-label": "Brush size", tabindex: 0 }, h("div", { class: "track" }), sizeFill, sizeKnob);
   const sizeValue = h("div", { class: "rail-value" });
   const stabBtn = iconButton("stabilizer", "Stabiliser");
-  const rail = h("div", { class: "rail" }, penBtn, eraserBtn, h("div", { class: "rule" }), swatch, h("div", { class: "rule" }), sizeSlider, sizeValue, h("div", { class: "rule" }), stabBtn);
+  const rail = h(
+    "div",
+    { class: "rail" },
+    toolButtons.select,
+    toolButtons.brush,
+    toolButtons.scatter,
+    toolButtons.eraser,
+    toolButtons.shape,
+    toolButtons.fill,
+    h("div", { class: "rule" }),
+    swatch,
+    h("div", { class: "rule" }),
+    sizeSlider,
+    sizeValue,
+    h("div", { class: "rule" }),
+    stabBtn,
+  );
 
-  // Colour popover.
+  // Colour popover: palette, custom colour, opacity, eyedropper.
   const paletteButtons = PALETTE.map((c) => {
     const b = h("button", { type: "button", role: "radio", "aria-label": c, "aria-checked": "false" });
     b.style.background = c;
@@ -159,18 +232,40 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     return b;
   });
   const colorInput = h("input", { type: "color", "aria-label": "Custom colour" });
-  const colorPop = h("div", { class: "popover", hidden: true }, h("div", { class: "palette", role: "radiogroup" }, ...paletteButtons), h("label", {}, "Custom", colorInput));
+  const opacityRange = h("input", { type: "range", min: 0.05, max: 1, step: 0.05, "aria-label": "Opacity" });
+  const opacityValue = h("span", { class: "range-value" });
+  const pickBtn = h("button", { type: "button", class: "btn small" }, icon("eyedropper"), "Pick from canvas");
+  const colorPop = h(
+    "div",
+    { class: "popover", hidden: true },
+    h("div", { class: "palette", role: "radiogroup" }, ...paletteButtons),
+    h("label", {}, "Custom", colorInput),
+    h("label", {}, "Opacity", h("span", { class: "range-row" }, opacityRange, opacityValue)),
+    pickBtn,
+  );
 
-  // Stabiliser popover.
+  // Per-tool options popover, rebuilt for whichever tool opened it.
+  const toolPop = h("div", { class: "popover options", hidden: true });
+
   const stabRange = h("input", { type: "range", min: 0, max: 0.95, step: 0.05, "aria-label": "Stabiliser strength" });
-  const stabPop = h("div", { class: "popover", hidden: true }, h("label", {}, "Stabiliser", stabRange));
+  const stabPop = h("div", { class: "popover", hidden: true }, h("label", {}, "Stabiliser", stabRange), h("p", { class: "hint" }, "Hold the pen still at the end of a line to straighten it."));
 
-  // Onion skin popover.
   const beforeRange = h("input", { type: "range", min: 0, max: 5, step: 1, "aria-label": "Drawings before" });
   const afterRange = h("input", { type: "range", min: 0, max: 5, step: 1, "aria-label": "Drawings after" });
   const onionPop = h("div", { class: "popover", hidden: true }, h("label", {}, "Before", beforeRange), h("label", {}, "After", afterRange));
 
-  const workspace = h("div", { class: "workspace" }, stage, rail, colorPop, stabPop, onionPop);
+  // Selection action bar.
+  const selButton = (name: IconName, label: string, shortcut?: string): HTMLButtonElement => iconButton(name, label, shortcut);
+  const selDup = selButton("duplicate", "Duplicate", "⌘D");
+  const selColor = selButton("recolor", "Apply current colour");
+  const selFlip = selButton("symmetry", "Flip horizontally");
+  const selFront = selButton("toFront", "Bring to front");
+  const selBack = selButton("toBack", "Send to back");
+  const selDelete = selButton("remove", "Delete", "⌫");
+  const selCount = h("span", { class: "selbar-count" });
+  const selbar = h("div", { class: "selbar", hidden: true }, selCount, h("div", { class: "sep" }), selDup, selColor, selFlip, selFront, selBack, h("div", { class: "sep" }), selDelete);
+
+  const workspace = h("div", { class: "workspace" }, stage, rail, selbar, colorPop, toolPop, stabPop, onionPop);
 
   // Timeline.
   const prevBtn = iconButton("prev", "Previous drawing", ",");
@@ -216,25 +311,67 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   const project = (): Project => history.current;
   const currentFrame = (): Frame => project().frames[index] ?? project().frames[0];
 
-  const scratch = new OffscreenCanvas(W, H);
-  const scratchCtx = scratch.getContext("2d");
+  const layers = new LayeredFrame(W, H);
+  const onionLayers = new LayeredFrame(W, H);
+  const onionScratch = new OffscreenCanvas(W, H);
+  const onionScratchCtx = onionScratch.getContext("2d");
+
+  let drafts: readonly ItemFields[] = [];
+  let excluded: ReadonlySet<number> = new Set();
+  let guideDraw: ((ctx: Ctx, pixel: number) => void) | null = null;
+  let liveQueued = false;
+
+  /** Re-render the drawing's layers (after an edit, or a change in what is hidden). */
+  const renderLayers = (frame: Frame = currentFrame()): void => {
+    layers.render(frame.items.filter((_, i) => !excluded.has(i)));
+  };
+
+  const composite = (): void => {
+    inkCtx.clearRect(0, 0, W, H);
+    layers.composite(inkCtx, drafts);
+    guideCtx.clearRect(0, 0, W, H);
+    if (settings.symmetry && !playing) {
+      guideCtx.save();
+      guideCtx.strokeStyle = "rgba(47, 107, 255, 0.55)";
+      guideCtx.lineWidth = 1 / view.scale;
+      guideCtx.setLineDash([6 / view.scale, 6 / view.scale]);
+      guideCtx.beginPath();
+      guideCtx.moveTo(W / 2, 0);
+      guideCtx.lineTo(W / 2, H);
+      guideCtx.stroke();
+      guideCtx.restore();
+    }
+    if (guideDraw !== null) guideDraw(guideCtx, 1 / view.scale);
+  };
+
+  const compositeSoon = (): void => {
+    if (liveQueued) return;
+    liveQueued = true;
+    requestAnimationFrame(() => {
+      liveQueued = false;
+      composite();
+    });
+  };
 
   const renderInk = (frame: Frame = currentFrame()): void => {
-    drawFrame(inkCtx, frame);
+    renderLayers(frame);
+    composite();
   };
 
   const renderOnion = (): void => {
     onionCtx.clearRect(0, 0, W, H);
-    if (!settings.onion || playing || scratchCtx === null) return;
+    if (!settings.onion || playing || onionScratchCtx === null) return;
     const css = getComputedStyle(root);
     const past = css.getPropertyValue("--onion-past").trim() || "#e5484d";
     const future = css.getPropertyValue("--onion-future").trim() || "#30a46c";
     const layer = (offset: number, tint: string, reach: number): void => {
       const f = project().frames[index + offset];
       if (f === undefined) return;
-      drawFrame(scratchCtx, f, tint);
+      onionLayers.render(f.items, { tint });
+      onionScratchCtx.clearRect(0, 0, W, H);
+      onionLayers.composite(onionScratchCtx);
       onionCtx.globalAlpha = 0.42 * (1 - (Math.abs(offset) - 1) / Math.max(1, reach));
-      onionCtx.drawImage(scratch, 0, 0);
+      onionCtx.drawImage(onionScratch, 0, 0);
     };
     const before: number = settings.onionBefore;
     const after: number = settings.onionAfter;
@@ -280,13 +417,27 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
       });
       return cell;
     });
-    const add = h("button", { type: "button", class: "frame-add", "aria-label": "New drawing" });
-    add.append(iconButton("add", "New drawing").firstChild ?? "");
+    const add = h("button", { type: "button", class: "frame-add", "aria-label": "New drawing" }, icon("add"));
     add.addEventListener("click", () => {
       edit(insertBlank(project(), index), index + 1);
     });
     frames.replaceChildren(...cells, add);
     frames.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
+  const toolIcon = (t: Exclude<Tool, "eyedropper">): IconName => {
+    switch (t) {
+      case "brush":
+        return settings.brush === "pen" ? "pen" : settings.brush;
+      case "scatter":
+        return settings.scatter;
+      case "shape":
+        return settings.shape;
+      case "select":
+      case "eraser":
+      case "fill":
+        return t;
+    }
   };
 
   const renderChrome = (): void => {
@@ -300,26 +451,35 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     delBtn.disabled = p.frames.length === 1;
     prevBtn.disabled = index === 0;
     nextBtn.disabled = index === p.frames.length - 1;
-    penBtn.setAttribute("aria-pressed", String(settings.tool === "pen"));
-    eraserBtn.setAttribute("aria-pressed", String(settings.tool === "eraser"));
+    for (const [t, b] of Object.entries(toolButtons)) b.setAttribute("aria-pressed", String(settings.tool === t));
+    for (const t of ["brush", "scatter", "shape"] as const) setIcon(toolButtons[t], toolIcon(t));
+    toolButtons.eraser.classList.toggle("badge", settings.eraser === "object");
+    toolButtons.eraser.title = `${ERASER_LABELS[settings.eraser]} (E)`;
+    symmetryBtn.setAttribute("aria-pressed", String(settings.symmetry));
     onionBtn.setAttribute("aria-pressed", String(settings.onion));
     stabBtn.setAttribute("aria-pressed", String(settings.stabilizer > 0));
     swatchDot.style.background = settings.color;
+    swatchDot.style.opacity = String(Math.max(0.25, settings.opacity));
     colorInput.value = settings.color;
     for (const [i, b] of paletteButtons.entries()) b.setAttribute("aria-checked", String(PALETTE[i] === settings.color));
+    opacityRange.value = String(settings.opacity);
+    opacityValue.textContent = `${Math.round(settings.opacity * 100)}%`;
     stabRange.value = String(settings.stabilizer);
     beforeRange.value = String(settings.onionBefore);
     afterRange.value = String(settings.onionAfter);
     onionRangeBtn.textContent = `${String(settings.onionBefore)} · ${String(settings.onionAfter)}`;
-    const t = Math.sqrt((settings.size - 0.5) / 119.5);
+    const size = activeSize(settings);
+    const t = Math.sqrt((size - 0.5) / 199.5);
     sizeFill.style.height = `calc(${t} * (100% - 12px))`;
     sizeKnob.style.bottom = `calc(6px + ${t} * (100% - 12px))`;
-    sizeValue.textContent = settings.size < 10 ? settings.size.toFixed(1) : String(Math.round(settings.size));
+    sizeValue.textContent = size < 10 ? size.toFixed(1) : String(Math.round(size));
+    workspace.dataset.tool = settings.tool;
   };
 
   const renderView = (): void => {
     stage.style.transform = cssTransform(view);
     zoomLabel.textContent = `${Math.round(view.scale * 100)}%`;
+    compositeSoon();
   };
 
   const renderAll = (): void => {
@@ -392,28 +552,33 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   // Editing -----------------------------------------------------------------------------
 
   /** Commit an edit, or say why it could not be made. */
-  const edit = (r: Result<Project>, nextIndex = index): void => {
+  const edit = (r: Result<Project>, nextIndex = index): boolean => {
     if (!r.ok) {
       say(r.error);
-      return;
+      return false;
     }
     history.commit(r.value);
+    if (nextIndex !== index) selectTool.reset();
     index = Math.max(0, Math.min(r.value.frames.length - 1, nextIndex));
+    excluded = new Set();
+    drafts = [];
     renderAll();
     scheduleSave();
+    return true;
   };
 
   const select = (i: number): void => {
     if (playing) stop();
+    current().deactivate();
+    selectTool.reset();
     index = Math.max(0, Math.min(project().frames.length - 1, i));
-    renderInk();
-    renderOnion();
-    renderStrip();
-    renderChrome();
+    renderAll();
   };
 
   const undo = (): void => {
+    current().cancel();
     if (!history.undo()) return;
+    selectTool.reset();
     index = Math.min(index, project().frames.length - 1);
     renderAll();
     scheduleSave();
@@ -421,23 +586,264 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   };
 
   const redo = (): void => {
+    current().cancel();
     if (!history.redo()) return;
+    selectTool.reset();
     index = Math.min(index, project().frames.length - 1);
     renderAll();
     scheduleSave();
     say("Redo");
   };
 
-  const updateSettings = (next: Settings): void => {
-    settings = next;
-    storeSettings(next);
+  const updateSettings = <K extends keyof SettingsFields>(key: K, value: SettingsFields[K]): void => {
+    settings = withSetting(settings, key, value);
+    storeSettings(settings);
     renderChrome();
   };
 
   const setColor = (raw: string): void => {
     const c = parseColor(raw);
-    if (c.ok) updateSettings(withSetting(settings, "color", c.value));
+    if (c.ok) updateSettings("color", c.value);
   };
+
+  // Tools -------------------------------------------------------------------------------
+
+  const host: ToolHost = {
+    width: W,
+    height: H,
+    project,
+    index: () => index,
+    settings: () => settings,
+    edit: (r) => edit(r),
+    preview: (next, exclude) => {
+      const hide = exclude ?? new Set<number>();
+      const changed = hide.size !== excluded.size || [...hide].some((i) => !excluded.has(i));
+      excluded = hide;
+      drafts = next;
+      if (changed) renderLayers();
+      compositeSoon();
+    },
+    guides: (draw) => {
+      guideDraw = draw;
+      compositeSoon();
+    },
+    say,
+    setColor: (c: Color) => {
+      updateSettings("color", c);
+    },
+    pixel: () => 1 / view.scale,
+    shift: () => shiftHeld,
+    lineRaster: (): Raster => {
+      const s = Math.min(1, FILL_RASTER / Math.max(W, H));
+      const w = Math.max(1, Math.ceil(W * s));
+      const hh = Math.max(1, Math.ceil(H * s));
+      const small = new LayeredFrame(w, hh, s);
+      small.render(currentFrame().items);
+      const ctx = small.line.getContext("2d");
+      const data = ctx === null ? new Uint8ClampedArray(w * hh * 4) : ctx.getImageData(0, 0, w, hh).data;
+      return rasterFromAlpha(data, w, hh, s);
+    },
+    colorAt: (x, y) => {
+      if (x < 0 || y < 0 || x >= W || y >= H) return undefined;
+      const [r = 255, g = 255, b = 255, a = 0] = inkCtx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+      // Over white paper.
+      const k = a / 255;
+      const c = parseColor(`#${toHex(r * k + 255 * (1 - k))}${toHex(g * k + 255 * (1 - k))}${toHex(b * k + 255 * (1 - k))}`);
+      return c.ok ? c.value : undefined;
+    },
+    selectionChanged: (count) => {
+      selbar.hidden = count === 0 || settings.tool !== "select";
+      selCount.textContent = count === 1 ? "1 item" : `${count} items`;
+    },
+  };
+
+  const freehand = new FreehandTool(host);
+  const objectEraser = new ObjectEraserTool(host);
+  const shapeTool = new ShapeDrawTool(host, () => (settings.shape === "curve" ? "line" : settings.shape));
+  const curveTool = new CurveTool(host);
+  const fillTool = new FillTool(host);
+  const selectTool = new SelectTool(host);
+  let lastDrawingTool: Tool = settings.tool === "eyedropper" ? "brush" : settings.tool;
+  const eyedropper = new EyedropperTool(host, () => {
+    setTool(lastDrawingTool);
+  });
+
+  const current = (): ToolController => {
+    switch (settings.tool) {
+      case "select":
+        return selectTool;
+      case "brush":
+      case "scatter":
+        return freehand;
+      case "eraser":
+        return settings.eraser === "object" ? objectEraser : freehand;
+      case "shape":
+        return settings.shape === "curve" ? curveTool : shapeTool;
+      case "fill":
+        return fillTool;
+      case "eyedropper":
+        return eyedropper;
+    }
+  };
+
+  const setTool = (t: Tool): void => {
+    if (t === settings.tool) return;
+    current().deactivate();
+    if (t !== "eyedropper") lastDrawingTool = t;
+    updateSettings("tool", t);
+    if (t !== "select") selbar.hidden = true;
+  };
+
+  /** A change of variant inside the current tool: finish what the old variant had going. */
+  const setVariant = <K extends keyof SettingsFields>(key: K, value: SettingsFields[K]): void => {
+    current().deactivate();
+    updateSettings(key, value);
+  };
+
+  // Popovers ----------------------------------------------------------------------------
+
+  const popovers = [colorPop, toolPop, stabPop, onionPop];
+  const closePopovers = (): void => {
+    for (const p of popovers) p.hidden = true;
+  };
+
+  const openPopover = (pop: HTMLElement, anchor: HTMLElement): void => {
+    const wasOpen = !pop.hidden;
+    closePopovers();
+    if (wasOpen) return;
+    pop.hidden = false;
+    const ws = workspace.getBoundingClientRect();
+    const a = anchor.getBoundingClientRect();
+    const p = pop.getBoundingClientRect();
+    if (anchor.closest(".rail") !== null) {
+      pop.style.left = `${a.right - ws.left + 10}px`;
+      pop.style.top = `${Math.max(8, Math.min(ws.height - p.height - 8, a.top - ws.top + a.height / 2 - p.height / 2))}px`;
+      pop.style.bottom = "";
+    } else {
+      pop.style.left = `${Math.max(8, Math.min(ws.width - p.width - 8, a.left - ws.left + a.width / 2 - p.width / 2))}px`;
+      pop.style.top = "";
+      pop.style.bottom = "8px";
+    }
+  };
+
+  interface Choice<V> {
+    readonly value: V;
+    readonly label: string;
+    readonly icon?: IconName;
+  }
+
+  const choices = <V>(heading: string, options: readonly Choice<V>[], currentValue: V, pick: (v: V) => void): HTMLElement =>
+    h(
+      "div",
+      { class: "choices", role: "radiogroup", "aria-label": heading },
+      h("div", { class: "pop-heading" }, heading),
+      ...options.map((o) => {
+        const b = h("button", { type: "button", class: "choice", role: "radio", "aria-checked": String(o.value === currentValue) }, o.icon === undefined ? null : icon(o.icon), h("span", {}, o.label));
+        b.addEventListener("click", () => {
+          pick(o.value);
+          closePopovers();
+        });
+        return b;
+      }),
+    );
+
+  const toggle = (label: string, on: boolean, flip: (v: boolean) => void): HTMLElement => {
+    const input = h("input", { type: "checkbox", checked: on });
+    input.addEventListener("change", () => {
+      flip(input.checked);
+    });
+    return h("label", { class: "toggle" }, label, input);
+  };
+
+  const toolOptions = (t: Exclude<Tool, "eyedropper">): HTMLElement[] | undefined => {
+    switch (t) {
+      case "brush":
+        return [choices("Brush", BRUSHES.map((b) => ({ value: b, label: BRUSH_LABELS[b], icon: b === "pen" ? "pen" : b })), settings.brush, (v) => { setVariant("brush", v); })];
+      case "scatter":
+        return [choices("Scatter brush", SCATTERS.map((b) => ({ value: b, label: SCATTER_LABELS[b], icon: b })), settings.scatter, (v) => { setVariant("scatter", v); })];
+      case "eraser":
+        return [choices("Eraser", ERASERS.map((m) => ({ value: m, label: ERASER_LABELS[m], icon: "eraser" as const })), settings.eraser, (v) => { setVariant("eraser", v); }), h("p", { class: "hint" }, "Object eraser removes whole strokes, shapes and fills.")];
+      case "shape":
+        return [
+          choices("Shape", SHAPE_TOOLS.map((s) => ({ value: s, label: SHAPE_LABELS[s], icon: s })), settings.shape, (v) => { setVariant("shape", v); }),
+          toggle("Filled", settings.shapeFilled, (v) => { updateSettings("shapeFilled", v); }),
+          h("p", { class: "hint" }, "Shift (or a near match) makes squares, circles and 15° lines. Curves: drag, then bend with the round handle."),
+        ];
+      case "fill":
+        return [choices("Fill", GAPS.map((g) => ({ value: g, label: GAP_LABELS[g] })), settings.gap, (v) => { updateSettings("gap", v); }), h("p", { class: "hint" }, "Fills go under the line art.")];
+      case "select":
+        return [h("p", { class: "hint" }, "Tap an item, or draw a loop around several. Drag to move, corners to scale, the round handle to rotate.")];
+    }
+  };
+
+  /** Tapping the tool you are already on opens its options. */
+  const RAIL_TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill"] as const;
+  for (const tool of RAIL_TOOLS) {
+    const b = toolButtons[tool];
+    b.addEventListener(
+      "click",
+      () => {
+        if (settings.tool !== tool) {
+          setTool(tool);
+          closePopovers();
+          return;
+        }
+        const content = toolOptions(tool);
+        if (content === undefined) return;
+        toolPop.replaceChildren(...content);
+        openPopover(toolPop, b);
+      },
+      { signal },
+    );
+  }
+
+  // Context menu ------------------------------------------------------------------------
+
+  const stepHold = (delta: number): void => {
+    const next = parseHold(currentFrame().hold + delta);
+    if (next.ok) edit(setHold(project(), index, next.value));
+  };
+
+  const frameMenu = (): MenuItem[] => [
+    { label: "New drawing after", shortcut: "N", action: () => { edit(insertBlank(project(), index), index + 1); } },
+    { label: "Duplicate drawing", shortcut: "D", action: () => { edit(duplicate(project(), index), index + 1); } },
+    "separator",
+    { label: "Hold one frame longer", disabled: currentFrame().hold >= 24, action: () => { stepHold(1); } },
+    { label: "Hold one frame shorter", disabled: currentFrame().hold <= 1, action: () => { stepHold(-1); } },
+    "separator",
+    { label: "Clear drawing", disabled: currentFrame().items.length === 0, action: () => { edit(clearFrame(project(), index)); } },
+    { label: "Delete drawing", danger: true, disabled: project().frames.length === 1, action: () => { edit(remove(project(), index), index - 1 < 0 ? 0 : index - 1); } },
+  ];
+
+  const selectionMenu = (): MenuItem[] =>
+    selectTool.count === 0
+      ? []
+      : [
+          { label: "Duplicate", shortcut: "⌘D", action: () => { selectTool.duplicate(); } },
+          { label: "Copy", shortcut: "⌘C", action: () => { selectTool.copy(); } },
+          { label: "Apply current colour", action: () => { selectTool.recolor(settings.color); } },
+          { label: "Flip horizontally", action: () => { selectTool.flip(); } },
+          { label: "Bring to front", action: () => { selectTool.restack(true); } },
+          { label: "Send to back", action: () => { selectTool.restack(false); } },
+          { label: "Delete", shortcut: "⌫", danger: true, action: () => { selectTool.remove(); } },
+          "separator",
+        ];
+
+  const canvasMenu = (): MenuItem[] => [
+    ...selectionMenu(),
+    { label: "Undo", shortcut: "⌘Z", disabled: !history.canUndo, action: undo },
+    { label: "Redo", shortcut: "⇧⌘Z", disabled: !history.canRedo, action: redo },
+    "separator",
+    { label: "Select all", shortcut: "⌘A", disabled: currentFrame().items.length === 0, action: () => { setTool("select"); selectTool.selectAll(); } },
+    { label: "Paste", shortcut: "⌘V", action: () => { setTool("select"); selectTool.paste(); } },
+    "separator",
+    ...frameMenu(),
+    "separator",
+    { label: "Mirror symmetry", shortcut: "M", checked: settings.symmetry, action: () => { updateSettings("symmetry", !settings.symmetry); compositeSoon(); } },
+    { label: "Onion skin", shortcut: "O", checked: settings.onion, action: () => { updateSettings("onion", !settings.onion); renderOnion(); } },
+    { label: "Fit to screen", shortcut: "0", action: fitView },
+    ...(fsBtn.hidden ? [] : [{ label: isFullscreen() ? "Exit fullscreen" : "Fullscreen", shortcut: "F", action: () => { void toggleFullscreen(); } }]),
+  ];
 
   // Playback ----------------------------------------------------------------------------
 
@@ -456,6 +862,8 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
       say("Add a second drawing to play");
       return;
     }
+    current().deactivate();
+    selectTool.reset();
     playing = true;
     setIcon(playBtn, "pause");
     playBtn.setAttribute("aria-label", "Pause");
@@ -492,8 +900,7 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
 
   // Pen ---------------------------------------------------------------------------------
 
-  let stroke: { readonly id: number; readonly smoother: Smoother; readonly samples: Sample[]; last: Sample } | undefined;
-  let liveQueued = false;
+  let penId: number | undefined;
 
   const local = (s: PenSample): Sample => {
     const r = workspace.getBoundingClientRect();
@@ -501,105 +908,44 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     return { x, y, pressure: s.pressure };
   };
 
-  const drawLiveSoon = (): void => {
-    if (liveQueued) return;
-    liveQueued = true;
-    requestAnimationFrame(() => {
-      liveQueued = false;
-      liveCtx.clearRect(0, 0, W, H);
-      if (stroke !== undefined) drawLive(liveCtx, stroke.samples, settings.size, settings.color, settings.tool === "eraser");
-    });
-  };
-
   const penDown = (e: PointerEvent, s: PenSample): void => {
     if (playing) stop();
     closePopovers();
-    workspace.setPointerCapture(e.pointerId);
-    const smoother = new Smoother(settings.stabilizer);
-    const first = smoother.push(local(s));
-    stroke = { id: e.pointerId, smoother, samples: [first], last: local(s) };
-    drawLiveSoon();
+    capture(workspace, e.pointerId);
+    penId = e.pointerId;
+    current().down(local(s));
   };
 
   const penMove = (e: PointerEvent): void => {
-    if (stroke?.id !== e.pointerId) return;
+    if (penId !== e.pointerId) return;
     for (const c of coalesced(e)) {
       const s = parsePenSample(c);
-      if (!s.ok) continue;
-      const raw = local(s.value);
-      stroke.last = raw;
-      stroke.samples.push(stroke.smoother.push(raw));
+      if (s.ok) current().move(local(s.value));
     }
-    drawLiveSoon();
   };
 
   const penUp = (e: PointerEvent): void => {
-    if (stroke?.id !== e.pointerId) return;
-    const done = stroke;
-    stroke = undefined;
-    done.samples.push(...done.smoother.finish(done.last));
-    liveCtx.clearRect(0, 0, W, H);
-    const points: Point[] = [];
-    for (const s of done.samples) {
-      const p = parsePoint([s.x, s.y, s.pressure]);
-      if (p.ok) points.push(p.value);
-    }
-    edit(
-      ((): Result<Project> => {
-        const made = makeStroke(settings.tool, settings.color, settings.size, points);
-        return made.ok ? addStroke(project(), index, made.value) : made;
-      })(),
-    );
+    if (penId !== e.pointerId) return;
+    penId = undefined;
+    const s = parsePenSample(e);
+    if (s.ok) current().up(local(s.value));
+    else current().cancel();
   };
 
   const penCancel = (e: PointerEvent): void => {
-    if (stroke?.id !== e.pointerId) return;
-    stroke = undefined;
-    liveCtx.clearRect(0, 0, W, H);
+    if (penId !== e.pointerId) return;
+    penId = undefined;
+    current().cancel();
   };
-
-  // Context menu ------------------------------------------------------------------------
-
-  const frameMenu = (): MenuItem[] => [
-    { label: "New drawing after", shortcut: "N", action: () => { edit(insertBlank(project(), index), index + 1); } },
-    { label: "Duplicate", shortcut: "D", action: () => { edit(duplicate(project(), index), index + 1); } },
-    "separator",
-    { label: "Hold one frame longer", disabled: currentFrame().hold >= 24, action: () => { stepHold(1); } },
-    { label: "Hold one frame shorter", disabled: currentFrame().hold <= 1, action: () => { stepHold(-1); } },
-    "separator",
-    { label: "Clear drawing", shortcut: "⌫", disabled: currentFrame().strokes.length === 0, action: () => { edit(clearFrame(project(), index)); } },
-    { label: "Delete drawing", danger: true, disabled: project().frames.length === 1, action: () => { edit(remove(project(), index), index - 1 < 0 ? 0 : index - 1); } },
-  ];
-
-  const canvasMenu = (): MenuItem[] => [
-    { label: "Undo", shortcut: "⌘Z", disabled: !history.canUndo, action: undo },
-    { label: "Redo", shortcut: "⇧⌘Z", disabled: !history.canRedo, action: redo },
-    "separator",
-    { label: "Pen", shortcut: "B", checked: settings.tool === "pen", action: () => { updateSettings(withSetting(settings, "tool", "pen")); } },
-    { label: "Eraser", shortcut: "E", checked: settings.tool === "eraser", action: () => { updateSettings(withSetting(settings, "tool", "eraser")); } },
-    "separator",
-    ...frameMenu(),
-    "separator",
-    { label: "Onion skin", shortcut: "O", checked: settings.onion, action: () => { updateSettings(withSetting(settings, "onion", !settings.onion)); renderOnion(); } },
-    { label: "Fit to screen", shortcut: "0", action: fitView },
-    ...(fsBtn.hidden ? [] : [{ label: isFullscreen() ? "Exit fullscreen" : "Fullscreen", shortcut: "F", action: () => { void toggleFullscreen(); } }]),
-  ];
-
-  workspace.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    if (stroke !== undefined) return;
-    openMenu(e.clientX, e.clientY, canvasMenu());
-  }, { signal });
 
   // Fingers -----------------------------------------------------------------------------
 
+  const touches = new Map<number, Touch>();
+  let gesture: { readonly view: View; readonly start: Map<number, readonly [number, number]>; readonly t0: number; moved: boolean; most: number } | undefined;
   let longPress = 0;
   const cancelLongPress = (): void => {
     window.clearTimeout(longPress);
   };
-
-  const touches = new Map<number, Touch>();
-  let gesture: { readonly view: View; readonly start: Map<number, readonly [number, number]>; readonly t0: number; moved: boolean; most: number } | undefined;
 
   const workspacePoint = (e: MouseEvent): readonly [number, number] => {
     const r = workspace.getBoundingClientRect();
@@ -620,10 +966,10 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
 
   const fingerDown = (e: PointerEvent): void => {
     // A palm resting while the pen draws is ignored outright.
-    if (stroke !== undefined) return;
+    if (penId !== undefined) return;
     const [x, y] = workspacePoint(e);
     touches.set(e.pointerId, { x, y, x0: x, y0: y });
-    workspace.setPointerCapture(e.pointerId);
+    capture(workspace, e.pointerId);
     restartGesture(true);
     cancelLongPress();
     if (touches.size === 1) {
@@ -685,35 +1031,8 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   const sizeFromSlider = (e: PointerEvent): void => {
     const r = sizeSlider.getBoundingClientRect();
     const t = Math.max(0, Math.min(1, (r.bottom - 6 - e.clientY) / (r.height - 12)));
-    const size = parseBrushSize(Math.round((0.5 + t * t * 119.5) * 2) / 2);
-    if (size.ok) updateSettings(withSetting(settings, "size", size.value));
-  };
-
-  // Popovers ----------------------------------------------------------------------------
-
-  const popovers = [colorPop, stabPop, onionPop];
-  const closePopovers = (): void => {
-    for (const p of popovers) p.hidden = true;
-  };
-
-  const openPopover = (pop: HTMLElement, anchor: HTMLElement): void => {
-    const wasOpen = !pop.hidden;
-    closePopovers();
-    if (wasOpen) return;
-    pop.hidden = false;
-    const ws = workspace.getBoundingClientRect();
-    const a = anchor.getBoundingClientRect();
-    const p = pop.getBoundingClientRect();
-    if (anchor.closest(".rail") !== null) {
-      pop.style.left = `${a.right - ws.left + 10}px`;
-      pop.style.top = `${Math.max(8, Math.min(ws.height - p.height - 8, a.top - ws.top + a.height / 2 - p.height / 2))}px`;
-      pop.style.bottom = "";
-      pop.style.right = "";
-    } else {
-      pop.style.left = `${Math.max(8, Math.min(ws.width - p.width - 8, a.left - ws.left + a.width / 2 - p.width / 2))}px`;
-      pop.style.top = "";
-      pop.style.bottom = "8px";
-    }
+    const size = parseBrushSize(Math.round((0.5 + t * t * 199.5) * 2) / 2);
+    if (size.ok) updateSettings(sizeKey(settings), size.value);
   };
 
   // Wiring ------------------------------------------------------------------------------
@@ -734,7 +1053,7 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
         // Space-drag or the middle button pans with a mouse, like a single finger.
         const [x, y] = workspacePoint(e);
         touches.set(e.pointerId, { x, y, x0: x, y0: y });
-        workspace.setPointerCapture(e.pointerId);
+        capture(workspace, e.pointerId);
         restartGesture(false);
         workspace.classList.add("panning");
         return;
@@ -759,12 +1078,15 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     },
     opts,
   );
-  const up = (e: PointerEvent): void => {
-    workspace.classList.remove("panning");
-    if (touches.has(e.pointerId)) fingerUp(e);
-    else penUp(e);
-  };
-  workspace.addEventListener("pointerup", up, opts);
+  workspace.addEventListener(
+    "pointerup",
+    (e) => {
+      workspace.classList.remove("panning");
+      if (touches.has(e.pointerId)) fingerUp(e);
+      else penUp(e);
+    },
+    opts,
+  );
   workspace.addEventListener(
     "pointercancel",
     (e) => {
@@ -779,7 +1101,7 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
       e.preventDefault();
       // A Magic Mouse or trackpad scrolls as the finger moves on it: never slide the
       // canvas out from under a stroke being drawn.
-      if (stroke !== undefined) return;
+      if (penId !== undefined) return;
       const [x, y] = workspacePoint(e);
       const zoomBy = (factor: number): void => {
         const next = clampScale(view.scale * factor);
@@ -804,32 +1126,22 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     },
     { signal, passive: false },
   );
+  workspace.addEventListener(
+    "contextmenu",
+    (e) => {
+      e.preventDefault();
+      if (penId !== undefined) return;
+      openMenu(e.clientX, e.clientY, canvasMenu());
+    },
+    opts,
+  );
   // Safari's own pinch-to-zoom of the page would fight the canvas gestures.
-  document.addEventListener("gesturestart", (e) => {
-    e.preventDefault();
-  }, opts);
+  document.addEventListener("gesturestart", (e) => { e.preventDefault(); }, opts);
 
-  sizeSlider.addEventListener(
-    "pointerdown",
-    (e) => {
-      sizeSlider.setPointerCapture(e.pointerId);
-      sizeFromSlider(e);
-    },
-    opts,
-  );
-  sizeSlider.addEventListener(
-    "pointermove",
-    (e) => {
-      if (sizeSlider.hasPointerCapture(e.pointerId)) sizeFromSlider(e);
-    },
-    opts,
-  );
+  sizeSlider.addEventListener("pointerdown", (e) => { capture(sizeSlider, e.pointerId); sizeFromSlider(e); }, opts);
+  sizeSlider.addEventListener("pointermove", (e) => { if (sizeSlider.hasPointerCapture(e.pointerId)) sizeFromSlider(e); }, opts);
 
-  back.addEventListener("click", () => {
-    void flush().then(() => {
-      go("#/");
-    });
-  }, opts);
+  back.addEventListener("click", () => { void flush().then(() => { go("#/"); }); }, opts);
   title.addEventListener(
     "change",
     () => {
@@ -842,10 +1154,9 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     },
     opts,
   );
-  title.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") title.blur();
-  }, opts);
+  title.addEventListener("keydown", (e) => { if (e.key === "Enter") title.blur(); }, opts);
   zoomLabel.addEventListener("click", fitView, opts);
+  symmetryBtn.addEventListener("click", () => { updateSettings("symmetry", !settings.symmetry); compositeSoon(); }, opts);
   undoBtn.addEventListener("click", undo, opts);
   redoBtn.addEventListener("click", redo, opts);
   fsBtn.addEventListener("click", () => void toggleFullscreen(), opts);
@@ -855,37 +1166,25 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     requestAnimationFrame(fitView);
   }, signal);
 
-  penBtn.addEventListener("click", () => {
-    updateSettings(withSetting(settings, "tool", "pen"));
+  swatch.addEventListener("click", () => { openPopover(colorPop, swatch); }, opts);
+  colorInput.addEventListener("input", () => { setColor(colorInput.value); }, opts);
+  opacityRange.addEventListener("input", () => {
+    const o = parseOpacity(Number(opacityRange.value));
+    if (o.ok) updateSettings("opacity", o.value);
   }, opts);
-  eraserBtn.addEventListener("click", () => {
-    updateSettings(withSetting(settings, "tool", "eraser"));
-  }, opts);
-  swatch.addEventListener("click", () => {
-    openPopover(colorPop, swatch);
-  }, opts);
-  colorInput.addEventListener("input", () => {
-    setColor(colorInput.value);
-  }, opts);
-  stabBtn.addEventListener("click", () => {
-    openPopover(stabPop, stabBtn);
-  }, opts);
+  pickBtn.addEventListener("click", () => { closePopovers(); setTool("eyedropper"); say("Tap the canvas to pick a colour"); }, opts);
+  stabBtn.addEventListener("click", () => { openPopover(stabPop, stabBtn); }, opts);
   stabRange.addEventListener("input", () => {
     const s = parseStabilizer(Number(stabRange.value));
-    if (s.ok) updateSettings(withSetting(settings, "stabilizer", s.value));
+    if (s.ok) updateSettings("stabilizer", s.value);
   }, opts);
-  onionBtn.addEventListener("click", () => {
-    updateSettings(withSetting(settings, "onion", !settings.onion));
-    renderOnion();
-  }, opts);
-  onionRangeBtn.addEventListener("click", () => {
-    openPopover(onionPop, onionRangeBtn);
-  }, opts);
+  onionBtn.addEventListener("click", () => { updateSettings("onion", !settings.onion); renderOnion(); }, opts);
+  onionRangeBtn.addEventListener("click", () => { openPopover(onionPop, onionRangeBtn); }, opts);
   const onionRange = (input: HTMLInputElement, key: "onionBefore" | "onionAfter"): void => {
     input.addEventListener("input", () => {
       const r = parseOnionRange(Number(input.value));
       if (r.ok) {
-        updateSettings(withSetting(settings, key, r.value));
+        updateSettings(key, r.value);
         renderOnion();
       }
     }, opts);
@@ -893,54 +1192,64 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
   onionRange(beforeRange, "onionBefore");
   onionRange(afterRange, "onionAfter");
 
-  prevBtn.addEventListener("click", () => {
-    select(index - 1);
-  }, opts);
-  nextBtn.addEventListener("click", () => {
-    select(index + 1);
-  }, opts);
-  playBtn.addEventListener("click", () => {
-    if (playing) stop();
-    else play();
-  }, opts);
+  selDup.addEventListener("click", () => { selectTool.duplicate(); }, opts);
+  selColor.addEventListener("click", () => { selectTool.recolor(settings.color); }, opts);
+  selFlip.addEventListener("click", () => { selectTool.flip(); }, opts);
+  selFront.addEventListener("click", () => { selectTool.restack(true); }, opts);
+  selBack.addEventListener("click", () => { selectTool.restack(false); }, opts);
+  selDelete.addEventListener("click", () => { selectTool.remove(); }, opts);
+
+  prevBtn.addEventListener("click", () => { select(index - 1); }, opts);
+  nextBtn.addEventListener("click", () => { select(index + 1); }, opts);
+  playBtn.addEventListener("click", () => { if (playing) stop(); else play(); }, opts);
   fpsSelect.addEventListener("change", () => {
     const f = parseFps(Number(fpsSelect.value));
     if (f.ok) edit(setFps(project(), f.value));
   }, opts);
-  const stepHold = (delta: number): void => {
-    const next = parseHold(currentFrame().hold + delta);
-    if (next.ok) edit(setHold(project(), index, next.value));
-  };
-  holdDown.addEventListener("click", () => {
-    stepHold(-1);
-  }, opts);
-  holdUp.addEventListener("click", () => {
-    stepHold(1);
-  }, opts);
-  addBtn.addEventListener("click", () => {
-    edit(insertBlank(project(), index), index + 1);
-  }, opts);
-  dupBtn.addEventListener("click", () => {
-    edit(duplicate(project(), index), index + 1);
-  }, opts);
-  delBtn.addEventListener("click", () => {
-    edit(remove(project(), index), index - 1 < 0 ? 0 : index - 1);
-  }, opts);
+  holdDown.addEventListener("click", () => { stepHold(-1); }, opts);
+  holdUp.addEventListener("click", () => { stepHold(1); }, opts);
+  addBtn.addEventListener("click", () => { edit(insertBlank(project(), index), index + 1); }, opts);
+  dupBtn.addEventListener("click", () => { edit(duplicate(project(), index), index + 1); }, opts);
+  delBtn.addEventListener("click", () => { edit(remove(project(), index), index - 1 < 0 ? 0 : index - 1); }, opts);
 
-  let spaceHeld = false;
   document.addEventListener(
     "keydown",
     (e) => {
+      shiftHeld = e.shiftKey;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       const mod = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
-      if (mod && key === "z") {
+      if (current().key?.(key) === true) {
         e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
         return;
       }
-      if (mod) return;
+      if (mod) {
+        if (key === "z") {
+          e.preventDefault();
+          if (e.shiftKey) redo();
+          else undo();
+        } else if (key === "a") {
+          e.preventDefault();
+          setTool("select");
+          selectTool.selectAll();
+        } else if (key === "c" && selectTool.count > 0) {
+          e.preventDefault();
+          selectTool.copy();
+        } else if (key === "v") {
+          e.preventDefault();
+          setTool("select");
+          selectTool.paste();
+        } else if (key === "d" && selectTool.count > 0) {
+          e.preventDefault();
+          selectTool.duplicate();
+        }
+        return;
+      }
+      const tool = TOOL_KEYS[key];
+      if (tool !== undefined) {
+        setTool(tool);
+        return;
+      }
       switch (key) {
         case " ":
           e.preventDefault();
@@ -949,15 +1258,13 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
           if (playing) stop();
           else play();
           return;
-        case "b":
-          updateSettings(withSetting(settings, "tool", "pen"));
-          return;
-        case "e":
-          updateSettings(withSetting(settings, "tool", "eraser"));
-          return;
         case "o":
-          updateSettings(withSetting(settings, "onion", !settings.onion));
+          updateSettings("onion", !settings.onion);
           renderOnion();
+          return;
+        case "m":
+          updateSettings("symmetry", !settings.symmetry);
+          compositeSoon();
           return;
         case ",":
           select(index - 1);
@@ -979,12 +1286,13 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
           return;
         case "backspace":
         case "delete":
-          edit(clearFrame(project(), index));
+          if (selectTool.count > 0) selectTool.remove();
+          else edit(clearFrame(project(), index));
           return;
         case "[":
         case "]": {
-          const size = parseBrushSize(Math.min(120, Math.max(0.5, settings.size * (key === "]" ? 1.25 : 0.8))));
-          if (size.ok) updateSettings(withSetting(settings, "size", size.value));
+          const size = parseBrushSize(Math.min(200, Math.max(0.5, activeSize(settings) * (key === "]" ? 1.25 : 0.8))));
+          if (size.ok) updateSettings(sizeKey(settings), size.value);
           return;
         }
         case "escape":
@@ -997,26 +1305,21 @@ export const editorScreen = (initial: Project, go: (hash: string) => void, signa
     opts,
   );
   document.addEventListener("keyup", (e) => {
+    shiftHeld = e.shiftKey;
     if (e.key === " ") spaceHeld = false;
   }, opts);
   window.addEventListener("resize", fitView, opts);
-  // A Space released while the window was in the background never sends its keyup.
+  // A key released while the window was in the background never sends its keyup.
   window.addEventListener("blur", () => {
     spaceHeld = false;
+    shiftHeld = false;
   }, opts);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") void flush();
-  }, opts);
-  window.addEventListener(
-    "beforeunload",
-    (e) => {
-      if (dirty || saving !== undefined) e.preventDefault();
-    },
-    opts,
-  );
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush(); }, opts);
+  window.addEventListener("beforeunload", (e) => { if (dirty || saving !== undefined) e.preventDefault(); }, opts);
   signal.addEventListener("abort", () => {
     closeMenu();
     cancelLongPress();
+    current().deactivate();
     stop();
     void flush();
   });

@@ -44,8 +44,10 @@ library
                     , filepath
                     , http-api-data
                     , optparse-applicative
+                    , scientific
                     , servant-server
                     , text
+                    , vector
                     , wai
                     , wai-app-static
 
@@ -64,7 +66,8 @@ test-suite spec
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     hs-source-dirs:   test
-    other-modules:    Anima.Gen
+    other-modules:    Anima.FixtureSpec
+                    , Anima.Gen
                     , Anima.StoreSpec
                     , Anima.Types.ProjectSpec
     build-depends:    base >=4.20 && <5
@@ -74,5 +77,7 @@ test-suite spec
                     , filepath
                     , hspec
                     , QuickCheck
+                    , scientific
                     , temporary
                     , text
+                    , vector

@@ -401,8 +401,10 @@ dialog::backdrop {
 /* Editor ------------------------------------------------------------------------------- */
 
 .editor {
+  /* Room for the status bar when the page runs fullscreen or from the home screen. */
+  --top-inset: env(safe-area-inset-top, 0px);
   display: grid;
-  grid-template-rows: var(--bar) 1fr auto;
+  grid-template-rows: calc(var(--bar) + var(--top-inset)) 1fr auto;
   height: 100%;
   height: 100dvh;
   background: var(--workspace);
@@ -412,7 +414,7 @@ dialog::backdrop {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 8px;
+  padding: var(--top-inset) 8px 0;
   padding-left: max(8px, env(safe-area-inset-left));
   padding-right: max(8px, env(safe-area-inset-right));
   background: var(--surface);
@@ -914,4 +916,192 @@ dialog::backdrop {
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+
+/* Tool options ------------------------------------------------------------------------- */
+
+.btn.zoom {
+  height: 32px;
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.small {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.popover.options {
+  width: 248px;
+}
+
+.choices {
+  display: grid;
+  gap: 2px;
+}
+
+.pop-heading {
+  margin: 0 0 6px 6px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice svg {
+  width: 18px;
+  height: 18px;
+  color: var(--text-2);
+}
+
+.choice:hover {
+  background: var(--hover);
+}
+
+.choice[aria-checked="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.choice[aria-checked="true"] svg {
+  color: var(--accent);
+}
+
+.toggle {
+  padding: 4px 6px 0;
+}
+
+.toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.hint {
+  margin: 0;
+  padding: 0 6px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.range-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-value {
+  min-width: 34px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* A dot on the eraser when it removes whole objects. */
+.icon-btn.badge {
+  position: relative;
+}
+
+.icon-btn.badge::after {
+  content: "";
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* Selection action bar */
+.selbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--float-shadow);
+  z-index: 2;
+}
+
+.selbar[hidden] {
+  display: none;
+}
+
+.selbar-count {
+  padding: 0 8px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.workspace[data-tool="select"] {
+  cursor: default;
+}
+
+.workspace[data-tool="fill"],
+.workspace[data-tool="eyedropper"] {
+  cursor: cell;
+}
+
+/*
+ * Fullscreen on iPad Safari draws the status bar and its own close button over the top
+ * of the page, whatever the safe-area inset says. Leave a strip for them on touch screens.
+ */
+@media (pointer: coarse) {
+  :fullscreen .editor,
+  .editor:fullscreen {
+    --top-inset: max(env(safe-area-inset-top, 0px), 24px);
+  }
+
+  :fullscreen .topbar {
+    padding-left: max(64px, env(safe-area-inset-left));
+  }
+}
+
+/* Started from the home screen: the status bar is over the page too. */
+@media (display-mode: fullscreen), (display-mode: standalone) {
+  .editor {
+    --top-inset: max(env(safe-area-inset-top, 0px), 20px);
+  }
+}
+
+@media (pointer: coarse) {
+  :-webkit-full-screen .editor {
+    --top-inset: max(env(safe-area-inset-top, 0px), 24px);
+  }
+
+  :-webkit-full-screen .topbar {
+    padding-left: max(64px, env(safe-area-inset-left));
+  }
 }
