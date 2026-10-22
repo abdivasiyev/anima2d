@@ -1,0 +1,73 @@
+# The desktop app for macOS: built on a v* tag and published as a release with its
+# disk image, or built by hand (Actions → Release → Run workflow) as a test, kept as an
+# artifact and not published. Runs on GitHub only; Forgejo runs .forgejo/workflows.
+name: Release
+
+on:
+    push:
+        tags: ["v*"]
+    workflow_dispatch:
+        inputs:
+            version:
+                description: Version to stamp a test build with (it is not published)
+                default: 0.0.0-test
+
+permissions:
+    contents: write
+
+jobs:
+    macos:
+        name: macOS (Apple silicon)
+        runs-on: macos-15
+        timeout-minutes: 150
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Version
+              id: version
+              env:
+                  WANTED: ${{ inputs.version }}
+              run: |
+                  if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$WANTED"; fi
+                  case "$v" in
+                      *[!A-Za-z0-9.-]* | "") echo "expected a version of letters, digits, dots and dashes, got '$v'" >&2; exit 1 ;;
+                  esac
+                  echo "version=$v" >> "$GITHUB_OUTPUT"
+
+            - name: Package
+              run: desktop/package/macos.sh "${{ steps.version.outputs.version }}"
+
+            - name: Keep the disk image
+              uses: actions/upload-artifact@v4
+              with:
+                  name: anima2D-${{ steps.version.outputs.version }}-macos-arm64
+                  path: dist/macos/*.dmg
+                  if-no-files-found: error
+
+            - name: Publish the release
+              if: github.ref_type == 'tag'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ steps.version.outputs.version }}
+              run: |
+                  cat > notes.md <<'EOF'
+                  ## anima2D for macOS (Apple silicon)
+
+                  Open the disk image and drag **anima2D** to Applications. Video and export use the ffmpeg inside the app; nothing else needs installing.
+
+                  The app is signed ad hoc, not by an Apple developer account, so the first time macOS will refuse to open it. Open **System Settings → Privacy & Security** and choose **Open Anyway** for anima2D, or run once in Terminal:
+
+                  ```
+                  xattr -dr com.apple.quarantine /Applications/anima2D.app
+                  ```
+                  EOF
+                  if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+                      gh release upload "$GITHUB_REF_NAME" dist/macos/*.dmg --clobber
+                  else
+                      gh release create "$GITHUB_REF_NAME" dist/macos/*.dmg --title "anima2D $VERSION" --notes-file notes.md --generate-notes --verify-tag
+                  fi

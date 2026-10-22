@@ -79,7 +79,9 @@
           meta.mainProgram = "anima2d";
         };
         # The native editor (GTK3); built only when asked for, so the server's builds never need GTK.
-        desktop = hpkgs.callCabal2nix "anima2d-desktop" ./desktop {anima2d = backend;};
+        # Its suites need a screen, ffmpeg and the examples, so they run in the dev shell
+        # (`just desktop-ui`), not here.
+        desktop = pkgs.haskell.lib.dontCheck (hpkgs.callCabal2nix "anima2d-desktop" ./desktop {anima2d = backend;});
       in {
         packages = {
           default = anima2d;

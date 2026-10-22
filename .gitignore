@@ -10,3 +10,4 @@ data/
 render/node_modules/
 render/dist/
 desktop/ui-snapshots/
+dist/

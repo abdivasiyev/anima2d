@@ -105,11 +105,19 @@ two.
 
 ## Desktop app
 
-A native editor, written in Haskell with GTK3, that runs on macOS and Linux:
+A native editor, written in Haskell with GTK3, that runs on macOS and Linux. For macOS on
+Apple silicon, download the disk image from the
+[releases](https://github.com/abdivasiyev/anima2d/releases) and drag anima2D to
+Applications. It is signed ad hoc, so the first time open it from **System Settings →
+Privacy & Security → Open Anyway**. To run it from the source instead:
 
 ```sh
 just desktop
 ```
+
+`just package-macos` builds the app and its disk image the way the releases are made: the
+editor and ffmpeg from the flake's nixpkgs, with every library they load and GTK's own
+files copied in. A `v*` tag builds and publishes a release on GitHub.
 
 It opens projects from a folder on this computer (the server's own store runs inside
 the app, so it works without a network) or from your anima2D server (its address, plus

@@ -45,6 +45,10 @@ examples:
 desktop:
     nix develop .#desktop -c cabal --project-file=cabal.project.desktop run anima2d-desktop
 
+# anima2D.app and its disk image in dist/macos, needing nothing installed where it runs.
+package-macos version="0.1.0":
+    desktop/package/macos.sh {{version}}
+
 # The desktop's UI test: drives the real window offscreen; snapshots land in desktop/ui-snapshots.
 desktop-ui:
     nix develop .#desktop -c cabal --project-file=cabal.project.desktop test anima2d-desktop:ui --test-show-details=direct
