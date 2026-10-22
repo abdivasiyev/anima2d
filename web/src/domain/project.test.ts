@@ -7,6 +7,7 @@ import v2Raw from "../../../fixtures/project-v2.json?raw";
 import v2UpgradedRaw from "../../../fixtures/project-v2-upgraded.json?raw";
 import v3Raw from "../../../fixtures/project-v3.json?raw";
 import v3RigRaw from "../../../fixtures/project-v3-rig.json?raw";
+import v3LooksRaw from "../../../fixtures/project-v3-looks.json?raw";
 import rejectionsRaw from "../../../fixtures/rejections.json?raw";
 import { parseColor, parseHeight, parseProject, parseProjectId, parseProjectName, parseWidth, unparseProject } from "./project";
 import { unwrap } from "./result";
@@ -123,6 +124,11 @@ describe("shared fixtures", () => {
 
   it("a rigged layer with a posed drawing round-trips", () => {
     const raw = fixture(v3RigRaw);
+    expect(unparseProject(unwrap(parseProject(raw)))).toEqual(raw);
+  });
+
+  it("blends, clipping, layer motion and a palette round-trip", () => {
+    const raw = fixture(v3LooksRaw);
     expect(unparseProject(unwrap(parseProject(raw)))).toEqual(raw);
   });
 

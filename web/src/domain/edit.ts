@@ -38,6 +38,7 @@ import {
   type ProjectId,
   type ProjectName,
   type Rig,
+  PLAIN_LOOK,
 } from "./project";
 
 export interface Where {
@@ -46,10 +47,9 @@ export interface Where {
 }
 
 const ONE: Hold = unwrap(parseHold(1));
-const FULL: Opacity = brandChecked<number, "Opacity">(1);
 
-const rebuild = (p: Project, layers: readonly Layer[], camera = p.camera, audio = p.audio): Result<Project> =>
-  makeProject(p.id, p.name, p.canvas, p.fps, layers, camera, audio);
+const rebuild = (p: Project, layers: readonly Layer[], camera = p.camera, audio = p.audio, palette = p.palette): Result<Project> =>
+  makeProject(p.id, p.name, p.canvas, p.fps, layers, camera, audio, palette);
 
 const blankCel = (): Cel => unwrap(makeCel(ONE, "none", []));
 
@@ -87,16 +87,16 @@ export const newProject = (id: ProjectId, name: ProjectName, canvas: Canvas, fps
   unwrap(
     andThen(parseLayerId("layer-1"), (lid) =>
       andThen(parseLabel("Layer 1"), (lname) =>
-        andThen(makeLayer({ kind: "drawing", id: lid, name: lname, visible: true, locked: false, opacity: FULL, holdLast: false, cels: [blankCel()], rig: null }), (layer) =>
+        andThen(makeLayer({ kind: "drawing", id: lid, name: lname, ...PLAIN_LOOK, holdLast: false, cels: [blankCel()], rig: null }), (layer) =>
           makeProject(id, name, canvas, fps, [layer]),
         ),
       ),
     ),
   );
 
-export const rename = (p: Project, name: ProjectName): Result<Project> => makeProject(p.id, name, p.canvas, p.fps, p.layers, p.camera, p.audio);
+export const rename = (p: Project, name: ProjectName): Result<Project> => makeProject(p.id, name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette);
 
-export const setFps = (p: Project, fps: Fps): Result<Project> => makeProject(p.id, p.name, p.canvas, fps, p.layers, p.camera, p.audio);
+export const setFps = (p: Project, fps: Fps): Result<Project> => makeProject(p.id, p.name, p.canvas, fps, p.layers, p.camera, p.audio, p.palette);
 
 // Items ---------------------------------------------------------------------------------
 
@@ -198,7 +198,7 @@ export const removeRange = (p: Project, r: Range): Result<Project> =>
 /** A new drawing layer above layer `below`, one blank drawing on it. */
 export const addDrawingLayer = (p: Project, below: number, name: LabelName, holdLast = false): Result<Project> =>
   andThen(newId("layer"), (id) =>
-    andThen(makeLayer({ kind: "drawing", id, name, visible: true, locked: false, opacity: FULL, holdLast, cels: [blankCel()], rig: null }), (layer) =>
+    andThen(makeLayer({ kind: "drawing", id, name, ...PLAIN_LOOK, holdLast, cels: [blankCel()], rig: null }), (layer) =>
       rebuild(p, [...p.layers.slice(0, below + 1), layer, ...p.layers.slice(below + 1)]),
     ),
   );
@@ -206,7 +206,7 @@ export const addDrawingLayer = (p: Project, below: number, name: LabelName, hold
 /** A reference image or video at the bottom, half transparent. */
 export const addReferenceLayer = (p: Project, asset: AssetId, media: Media, name: LabelName): Result<Project> =>
   andThen(newId("ref"), (id) =>
-    andThen(makeLayer({ kind: "reference", id, name, visible: true, locked: true, opacity: brandChecked<number, "Opacity">(0.5), asset, media }), (layer) =>
+    andThen(makeLayer({ kind: "reference", id, name, ...PLAIN_LOOK, locked: true, opacity: brandChecked<number, "Opacity">(0.5), asset, media }), (layer) =>
       rebuild(p, [layer, ...p.layers]),
     ),
   );

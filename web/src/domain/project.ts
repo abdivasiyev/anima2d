@@ -615,14 +615,95 @@ export const parseMedia = oneOf(MEDIA, 'expected media of "image" or "video"');
 
 const parseBool = (raw: unknown): Result<boolean> => (typeof raw === "boolean" ? ok(raw) : err("expected true or false"));
 
-/** Drawings on a timeline. `holdLast` keeps the last one showing to the end (backgrounds). */
-export interface DrawingLayerFields {
-  readonly kind: "drawing";
+// Layer looks ----------------------------------------------------------------------------
+
+/** How a layer mixes with the layers under it; on the wire only when not "normal". */
+export const BLENDS = ["normal", "multiply", "screen", "overlay", "add", "darken", "lighten"] as const;
+export type Blend = (typeof BLENDS)[number];
+const blendOf = oneOf(BLENDS, 'expected a blend of "normal", "multiply", "screen", "overlay", "add", "darken" or "lighten"');
+export const parseBlend = (raw: unknown): Result<Blend> => (raw === undefined || raw === null ? ok("normal") : blendOf(raw));
+
+const parseOptionalBool = (raw: unknown): Result<boolean> => (raw === undefined || raw === null ? ok(false) : parseBool(raw));
+
+export const MAX_MOTION_KEYS = 1000;
+
+/** How big a layer is drawn, relative to itself: 0.01 to 100. */
+export type Scale = Brand<number, "Scale">;
+
+export const parseScale = (raw: unknown): Result<Scale> =>
+  andThen(number(raw), (n) => (n >= 0.01 && n <= 100 ? ok(brandChecked<number, "Scale">(n)) : err("expected a scale from 0.01 to 100")));
+
+/** A key's opacity, which multiplies the layer's: 0 (gone) to 1. */
+export type Fade = Brand<number, "Fade">;
+
+export const parseFade = (raw: unknown): Result<Fade> =>
+  andThen(number(raw), (n) => (n >= 0 && n <= 1 ? ok(brandChecked<number, "Fade">(n)) : err("expected an opacity from 0 to 1")));
+
+/** Where a layer is at a frame, and how it eases into the next key. */
+export type MotionKey = Brand<
+  { readonly frame: FrameIndex; readonly position: Vec; readonly scale: Scale; readonly rotation: Angle; readonly opacity: Fade; readonly ease: Ease },
+  "MotionKey"
+>;
+
+export const makeMotionKey = (frame: FrameIndex, position: Vec, scale: Scale, rotation: Angle, opacity: Fade, ease: Ease): MotionKey =>
+  brandChecked({ frame, position, scale, rotation, opacity, ease });
+
+const parseMotionKey = (raw: unknown): Result<MotionKey> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const frame = yield* field(o, "frame", parseFrameIndex);
+    const position = yield* field(o, "position", parseVec);
+    const scale = yield* field(o, "scale", parseScale);
+    const rotation = yield* field(o, "rotation", parseAngle);
+    const opacity = yield* field(o, "opacity", parseFade);
+    const ease = yield* field(o, "ease", parseEase);
+    return ok(makeMotionKey(frame, position, scale, rotation, opacity, ease));
+  });
+
+/** A layer moved, scaled, turned and faded over time about its pivot. Keys in frame order, one per frame. */
+export type Motion = Brand<{ readonly pivot: Vec; readonly keys: NonEmpty<MotionKey> }, "Motion">;
+
+export const makeMotion = (pivot: Vec, keys: readonly MotionKey[]): Result<Motion> => {
+  const ne = nonEmpty(keys);
+  if (ne === undefined || keys.length > MAX_MOTION_KEYS) return err(`keys: expected 1 to ${MAX_MOTION_KEYS} keys`);
+  if (keys.some((k, i) => i > 0 && k.frame <= (keys[i - 1]?.frame ?? -1))) return err("keys: expected keys in frame order, one per frame");
+  return ok(brandChecked({ pivot, keys: ne }));
+};
+
+const parseMotion = (raw: unknown): Result<Motion | null> =>
+  raw === undefined || raw === null
+    ? ok(null)
+    : parseWith(function* () {
+        const o = yield* bind(object(raw));
+        const pivot = yield* field(o, "pivot", parseVec);
+        const keys = yield* field(o, "keys", (v) => andThen(andThen(array(v), (xs) => bounded("keys", 1, MAX_MOTION_KEYS, xs)), (xs) => each(xs, parseMotionKey)));
+        return makeMotion(pivot, keys);
+      });
+
+const unparseMotion = (m: Motion): unknown => ({
+  pivot: [m.pivot[0], m.pivot[1]],
+  keys: m.keys.map((k) => ({ frame: k.frame, position: [k.position[0], k.position[1]], scale: k.scale, rotation: k.rotation, opacity: k.opacity, ease: k.ease })),
+});
+
+/** What every layer has: an id, a name, and how it shows. */
+export interface LookFields {
   readonly id: LayerId;
   readonly name: LabelName;
   readonly visible: boolean;
   readonly locked: boolean;
   readonly opacity: Opacity;
+  readonly blend: Blend;
+  /** Drawn only where the layers it clips to (the nearest unclipped one below) are. */
+  readonly clip: boolean;
+  readonly motion: Motion | null;
+}
+
+/** A new layer's look apart from its id and name. */
+export const PLAIN_LOOK = { visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), blend: "normal", clip: false, motion: null } as const;
+
+/** Drawings on a timeline. `holdLast` keeps the last one showing to the end (backgrounds). */
+export interface DrawingLayerFields extends LookFields {
+  readonly kind: "drawing";
   readonly holdLast: boolean;
   readonly cels: NonEmpty<Cel>;
   /** A skeleton; the first drawing is its rest pose. On the wire only when there is one. */
@@ -630,13 +711,8 @@ export interface DrawingLayerFields {
 }
 
 /** An image or video to trace over; shown in the editor, never exported. */
-export interface ReferenceLayerFields {
+export interface ReferenceLayerFields extends LookFields {
   readonly kind: "reference";
-  readonly id: LayerId;
-  readonly name: LabelName;
-  readonly visible: boolean;
-  readonly locked: boolean;
-  readonly opacity: Opacity;
   readonly asset: AssetId;
   readonly media: Media;
 }
@@ -666,31 +742,42 @@ export const parseLayer = (raw: unknown): Result<Layer> =>
     const visible = yield* field(o, "visible", parseBool);
     const locked = yield* field(o, "locked", parseBool);
     const opacity = yield* field(o, "opacity", parseOpacity);
+    const blend = yield* field(o, "blend", parseBlend);
+    const clip = yield* field(o, "clip", parseOptionalBool);
+    const motion = yield* field(o, "motion", parseMotion);
+    const look = { id, name, visible, locked, opacity, blend, clip, motion };
     if (kind === "drawing") {
       const holdLast = yield* field(o, "holdLast", parseBool);
       const cels = yield* field(o, "cels", parseCels(parseCelV3));
       const rig = yield* field(o, "rig", parseRig);
-      return makeLayer({ kind, id, name, visible, locked, opacity, holdLast, cels, rig });
+      return makeLayer({ kind, ...look, holdLast, cels, rig });
     }
     const asset = yield* field(o, "asset", parseAssetId);
     const media = yield* field(o, "media", parseMedia);
-    return makeLayer({ kind, id, name, visible, locked, opacity, asset, media });
+    return makeLayer({ kind, ...look, asset, media });
   });
+
+const unparseLook = (l: Layer): Record<string, unknown> => ({
+  kind: l.kind,
+  id: l.id,
+  name: l.name,
+  visible: l.visible,
+  locked: l.locked,
+  opacity: l.opacity,
+  ...(l.blend === "normal" ? {} : { blend: l.blend }),
+  ...(l.clip ? { clip: true } : {}),
+  ...(l.motion === null ? {} : { motion: unparseMotion(l.motion) }),
+});
 
 const unparseLayer = (l: Layer): unknown =>
   l.kind === "drawing"
     ? {
-        kind: l.kind,
-        id: l.id,
-        name: l.name,
-        visible: l.visible,
-        locked: l.locked,
-        opacity: l.opacity,
+        ...unparseLook(l),
         holdLast: l.holdLast,
         cels: l.cels.map((c) => ({ hold: c.hold, mark: c.mark, items: c.items.map(unparseItem), ...(c.pose === null ? {} : { pose: unparsePose(c.pose) }) })),
         ...(l.rig === null ? {} : { rig: unparseRig(l.rig) }),
       }
-    : { kind: l.kind, id: l.id, name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, asset: l.asset, media: l.media };
+    : { ...unparseLook(l), asset: l.asset, media: l.media };
 
 // Camera --------------------------------------------------------------------------------
 
@@ -777,9 +864,16 @@ export type Project = Brand<
     /** In frame order, one key per frame at most. */
     readonly camera: readonly CameraKey[];
     readonly audio: readonly AudioTrack[];
+    /** The project's colours, to pick from and to recolour everything by. */
+    readonly palette: readonly Color[];
   },
   "Project"
 >;
+
+export const MAX_PALETTE = 64;
+
+const parsePalette = (raw: unknown): Result<Color[]> =>
+  raw === undefined || raw === null ? ok([]) : andThen(andThen(array(raw), (xs) => bounded("colours", 0, MAX_PALETTE, xs)), (xs) => each(xs, parseColor));
 
 /** Build a project from values already parsed; what is left are the cross-field rules. */
 export const makeProject = (
@@ -790,6 +884,7 @@ export const makeProject = (
   layers: readonly Layer[],
   camera: readonly CameraKey[] = [],
   audio: readonly AudioTrack[] = [],
+  palette: readonly Color[] = [],
 ): Result<Project> => {
   const ne = nonEmpty(layers);
   if (ne === undefined || layers.length > MAX_LAYERS) return err(`layers: expected 1 to ${MAX_LAYERS} layers`);
@@ -799,7 +894,8 @@ export const makeProject = (
   if (camera.some((k, i) => i > 0 && k.frame <= (camera[i - 1]?.frame ?? -1))) return err("camera: expected keys in frame order, one per frame");
   if (audio.length > MAX_AUDIO_TRACKS) return err(`audio: expected 0 to ${MAX_AUDIO_TRACKS} tracks`);
   if (new Set(audio.map((a) => a.id)).size !== audio.length) return err("audio: expected every track id to be different");
-  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio }));
+  if (palette.length > MAX_PALETTE) return err(`palette: expected 0 to ${MAX_PALETTE} colours`);
+  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio, palette }));
 };
 
 const firstLayer = (cels: NonEmpty<Cel>): Result<Layer> => {
@@ -807,7 +903,7 @@ const firstLayer = (cels: NonEmpty<Cel>): Result<Layer> => {
   const name = parseLabel("Layer 1");
   if (!id.ok) return id;
   if (!name.ok) return name;
-  return makeLayer({ kind: "drawing", id: id.value, name: name.value, visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), holdLast: false, cels, rig: null });
+  return makeLayer({ kind: "drawing", id: id.value, name: name.value, ...PLAIN_LOOK, holdLast: false, cels, rig: null });
 };
 
 export const parseProject = (raw: unknown): Result<Project> =>
@@ -828,7 +924,8 @@ export const parseProject = (raw: unknown): Result<Project> =>
     const layers = yield* field(o, "layers", (v) => andThen(andThen(array(v), (xs) => bounded("layers", 1, MAX_LAYERS, xs)), (xs) => each(xs, parseLayer)));
     const camera = yield* field(o, "camera", (v) => andThen(andThen(array(v), (xs) => bounded("keys", 0, MAX_CAMERA_KEYS, xs)), (xs) => each(xs, parseCameraKey)));
     const audio = yield* field(o, "audio", (v) => andThen(andThen(array(v), (xs) => bounded("tracks", 0, MAX_AUDIO_TRACKS, xs)), (xs) => each(xs, parseAudioTrack)));
-    return makeProject(id, name, canvas, fps, layers, camera, audio);
+    const palette = yield* field(o, "palette", parsePalette);
+    return makeProject(id, name, canvas, fps, layers, camera, audio, palette);
   });
 
 /** The wire shape the server parses; always format 3. */
@@ -841,6 +938,7 @@ export const unparseProject = (p: Project): unknown => ({
   layers: p.layers.map(unparseLayer),
   camera: p.camera.map((k) => ({ frame: k.frame, center: [k.center[0], k.center[1]], zoom: k.zoom, rotation: k.rotation, ease: k.ease })),
   audio: p.audio.map((a) => ({ id: a.id, asset: a.asset, name: a.name, offset: a.offset, volume: a.volume, muted: a.muted })),
+  ...(p.palette.length === 0 ? {} : { palette: [...p.palette] }),
 });
 
 // Time ----------------------------------------------------------------------------------

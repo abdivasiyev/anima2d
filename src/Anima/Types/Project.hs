@@ -786,8 +786,81 @@ mediaName :: Media -> Text
 mediaName = Text.toLower . tshow
 
 -- | What every layer has: an id, a name, and how it shows.
-data LayerLook = LayerLook {layerId :: LayerId, label :: Label, visible :: Bool, locked :: Bool, opacity :: Opacity}
+data LayerLook = LayerLook
+    { layerId :: LayerId
+    , label :: Label
+    , visible :: Bool
+    , locked :: Bool
+    , opacity :: Opacity
+    , blend :: Blend
+    , clip :: Bool
+    -- ^ Drawn only where the layers it clips to (the nearest unclipped one below) are.
+    , motion :: Maybe Motion
+    }
     deriving stock (Eq, Show)
+
+plainLook :: LayerId -> Label -> LayerLook
+plainLook i l = LayerLook i l True False (Opacity 1) Normal False Nothing
+
+-- | How a layer mixes with the layers under it; on the wire only when not normal.
+data Blend = Normal | Multiply | Screen | Overlay | Add | Darken | Lighten
+    deriving stock (Bounded, Enum, Eq, Ord, Show)
+
+blendName :: Blend -> Text
+blendName = Text.toLower . tshow
+
+blendFrom :: Value -> Either Text Blend
+blendFrom = \case
+    Null -> Right Normal
+    v -> oneOf blendName "expected a blend of \"normal\", \"multiply\", \"screen\", \"overlay\", \"add\", \"darken\" or \"lighten\"" v
+
+optionalBool :: Value -> Either Text Bool
+optionalBool = \case
+    Null -> Right False
+    v -> boolFrom v
+
+maxMotionKeys :: Int
+maxMotionKeys = 1000
+
+{- | A layer moved, scaled, turned and faded over time, about its pivot: each key holds
+until it eases into the next.
+-}
+data Motion = Motion {pivot :: Vec, keys :: NonEmpty MotionKey}
+    deriving stock (Eq, Show)
+
+data MotionKey = MotionKey {frame :: Int, position :: Vec, scale :: Double, turn :: Angle, alpha :: Double, ease :: Ease}
+    deriving stock (Eq, Show)
+
+motionFrom :: Value -> Either Text (Maybe Motion)
+motionFrom = \case
+    Null -> Right Nothing
+    v -> do
+        o <- asObject v
+        pv <- field "pivot" vecFrom o
+        ks <- field "keys" (asArray >=> bounded "keys" 1 maxMotionKeys >=> indexed motionKeyFrom >=> nonEmpty ("expected 1 to " <> tshow maxMotionKeys <> " keys") >=> inOrder) o
+        Right (Just (Motion pv ks))
+    where
+        inOrder ks
+            | or (zipWith (\a b -> b.frame <= a.frame) (NonEmpty.toList ks) (NonEmpty.tail ks)) = Left "expected keys in frame order, one per frame"
+            | otherwise = Right ks
+
+motionKeyFrom :: Value -> Either Text MotionKey
+motionKeyFrom =
+    asObject >=> \o ->
+        MotionKey
+            <$> field "frame" frameIndexFrom o
+            <*> field "position" vecFrom o
+            <*> field "scale" (ranged Prelude.id 0.01 100 "expected a scale from 0.01 to 100") o
+            <*> field "rotation" angleFrom o
+            <*> field "opacity" (ranged Prelude.id 0 1 "expected an opacity from 0 to 1") o
+            <*> field "ease" (oneOf easeName "expected an ease of \"linear\", \"in\", \"out\" or \"inOut\"") o
+
+motionValue :: Motion -> Value
+motionValue m =
+    object
+        [ "pivot" .= vecValue m.pivot
+        , "keys" .= [let Angle a = k.turn in object ["frame" .= k.frame, "position" .= vecValue k.position, "scale" .= number k.scale, "rotation" .= number a, "opacity" .= number k.alpha, "ease" .= easeName k.ease] | k <- NonEmpty.toList m.keys]
+        ]
 
 data Layer
     = -- | Drawings on a timeline; holding the last one to the end makes a background.
@@ -815,6 +888,9 @@ layerFrom =
                 <*> field "visible" boolFrom o
                 <*> field "locked" boolFrom o
                 <*> field "opacity" opacityFrom o
+                <*> field "blend" blendFrom o
+                <*> field "clip" optionalBool o
+                <*> field "motion" motionFrom o
         case kind of
             KDrawing -> DrawingLayer look <$> field "holdLast" boolFrom o <*> field "cels" (celsFrom "cels" celV3From) o <*> field "rig" rigFrom o
             KReference -> ReferenceLayer look <$> field "asset" assetIdFrom o <*> field "media" (oneOf mediaName "expected media of \"image\" or \"video\"") o
@@ -828,7 +904,11 @@ layerValue l = object (look <> rest)
         LayerId lid = lk.layerId
         Label nm = lk.label
         Opacity op = lk.opacity
-        look = ["kind" .= kind, "id" .= lid, "name" .= nm, "visible" .= lk.visible, "locked" .= lk.locked, "opacity" .= number op]
+        look =
+            ["kind" .= kind, "id" .= lid, "name" .= nm, "visible" .= lk.visible, "locked" .= lk.locked, "opacity" .= number op]
+                <> ["blend" .= blendName lk.blend | lk.blend /= Normal]
+                <> ["clip" .= True | lk.clip]
+                <> maybe [] (\m -> ["motion" .= motionValue m]) lk.motion
 
 lookOf :: Layer -> LayerLook
 lookOf = \case
@@ -910,9 +990,19 @@ data Project = Project
     , layers :: NonEmpty Layer
     , camera :: [CameraKey]
     , audio :: [AudioTrack]
+    , palette :: [Color]
+    -- ^ The project's colours, to pick from and to recolour everything by.
     }
     deriving stock (Eq, Show)
     deriving (FromJSON, ToJSON) via Parsed Project
+
+maxPalette :: Int
+maxPalette = 64
+
+paletteFrom :: Value -> Either Text [Color]
+paletteFrom = \case
+    Null -> Right []
+    v -> (asArray >=> bounded "colours" 0 maxPalette >=> indexed colorFrom) v
 
 projectId :: Project -> ProjectId
 projectId p = p.id
@@ -939,7 +1029,7 @@ isDrawingLayer = \case
 
 -- | Formats 1 and 2: one list of drawings, which becomes the first layer.
 firstLayer :: NonEmpty Cel -> Layer
-firstLayer cels = DrawingLayer (LayerLook (LayerId "layer-1") (Label "Layer 1") True False (Opacity 1)) False cels Nothing
+firstLayer cels = DrawingLayer (plainLook (LayerId "layer-1") (Label "Layer 1")) False cels Nothing
 
 instance Parse Project where
     type Raw Project = Value
@@ -957,23 +1047,25 @@ instance Parse Project where
             if version < 3
                 then do
                     cels <- field "frames" (celsFrom "frames" (if version == 1 then celOldFrom "strokes" strokeV1From else celOldFrom "items" parse)) o
-                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = []}
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = [], palette = []}
                 else do
                     ls <- field "layers" (asArray >=> bounded "layers" 1 maxLayers >=> indexed layerFrom >=> nonEmpty ("expected 1 to " <> tshow maxLayers <> " layers")) o
                     cam <- field "camera" (asArray >=> bounded "keys" 0 maxCameraKeys >=> indexed cameraKeyFrom) o
                     au <- field "audio" (asArray >=> bounded "tracks" 0 maxAudioTracks >=> indexed audioTrackFrom) o
-                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au}
+                    pal <- field "palette" paletteFrom o
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au, palette = pal}
     unparse p =
         object
-            [ "format" .= (3 :: Int)
-            , "id" .= unparse p.id
-            , "name" .= unparse p.name
-            , "canvas" .= canvasValue p.canvas
-            , "fps" .= fpsValue p.fps
-            , "layers" .= map layerValue (NonEmpty.toList p.layers)
-            , "camera" .= map cameraKeyValue p.camera
-            , "audio" .= map audioTrackValue p.audio
-            ]
+            $ [ "format" .= (3 :: Int)
+              , "id" .= unparse p.id
+              , "name" .= unparse p.name
+              , "canvas" .= canvasValue p.canvas
+              , "fps" .= fpsValue p.fps
+              , "layers" .= map layerValue (NonEmpty.toList p.layers)
+              , "camera" .= map cameraKeyValue p.camera
+              , "audio" .= map audioTrackValue p.audio
+              ]
+                <> ["palette" .= map colorValue p.palette | not (null p.palette)]
 
 -- | The timeline's length: its longest drawing layer.
 duration :: Project -> Int
@@ -983,7 +1075,7 @@ duration p = maximum (1 :| [sum [n | Cel (Hold n) _ _ _ <- NonEmpty.toList cels]
 
 -- | A new project with one drawing layer and one empty drawing.
 newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project
-newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = []}
+newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = [], palette = []}
 
 {- | The layer an agent means: by id, or (none given) the topmost drawing layer. Returned
 as its index, bottom first.
@@ -1003,7 +1095,8 @@ layersSummary p =
         [ object (["index" .= i, "id" .= t, "name" .= nm, "kind" .= kind] <> extra)
         | (i, l) <- zip [0 :: Int ..] (NonEmpty.toList p.layers)
         , let
-            LayerLook (LayerId t) (Label nm) _ _ _ = lookOf l
+            LayerId t = (lookOf l).layerId
+            Label nm = (lookOf l).label
             (kind, extra) = case l of
                 DrawingLayer _ holdLast cels rig -> ("drawing" :: Text, ["drawings" .= length cels, "holdLast" .= holdLast, "rigged" .= isJust rig])
                 ReferenceLayer {} -> ("reference", [])
@@ -1093,7 +1186,7 @@ addLayer raw background p = do
                     c = "layer-" <> tshow (n :: Int)
                 , c `notElem` ids
                 ]
-        layer = DrawingLayer (LayerLook (LayerId fresh) lbl True False (Opacity 1)) background (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing)) Nothing
+        layer = DrawingLayer (plainLook (LayerId fresh) lbl) background (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing)) Nothing
         ls = NonEmpty.toList p.layers
         (refs, others) = break isDrawingLayer ls
     layers' <- nonEmpty "expected a layer" (if background then refs <> [layer] <> others else ls <> [layer])
