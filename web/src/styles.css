@@ -69,6 +69,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   overscroll-behavior: none;
+  touch-action: manipulation;
 }
 
 body {
@@ -77,6 +78,8 @@ body {
   user-select: none;
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
+  /* No double-tap zoom anywhere (iPad Safari ignores user-scalable=no); scrolling still works. */
+  touch-action: manipulation;
 }
 
 #app {
@@ -1115,12 +1118,17 @@ dialog::backdrop {
 
 .tl {
   position: relative;
-  max-height: 34vh;
+  max-height: var(--tl-h, 34vh);
   overflow: hidden;
 }
 
+.tl-sized .tl,
+.tl-sized .tl-body {
+  height: var(--tl-h);
+}
+
 .tl-body {
-  max-height: 34vh;
+  max-height: var(--tl-h, 34vh);
   overflow: auto;
   overscroll-behavior: contain;
   padding-bottom: 6px;
@@ -1529,4 +1537,69 @@ a.btn {
 
 .rail .rule {
   margin: 4px 0;
+}
+
+/* The timeline's top edge resizes it. */
+.timeline {
+  position: relative;
+}
+
+.tl-grip {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.tl-grip::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.tl-grip:hover::after,
+.tl-grip:active::after {
+  background: var(--accent);
+}
+
+/* The tool rail moves by its grip and settles on either edge. */
+.rail.right {
+  left: auto;
+  right: max(12px, env(safe-area-inset-right));
+}
+
+.rail.dragging {
+  box-shadow: var(--float-shadow), 0 0 0 2px var(--accent);
+  transition: none;
+}
+
+.rail-grip {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 18px;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.rail-grip svg {
+  width: 16px;
+  height: 16px;
+  transform: rotate(90deg);
+}
+
+.rail.dragging .rail-grip {
+  cursor: grabbing;
 }

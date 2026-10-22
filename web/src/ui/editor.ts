@@ -101,11 +101,14 @@ import {
   type Settings,
   type SettingsFields,
   type Tool,
+  parseFraction,
+  parsePanelHeight,
+  parseRailSide,
 } from "../domain/settings";
 import { FILL_RASTER, rasterFromAlpha, type Raster } from "../editor/fill";
-import type { XY } from "../editor/geometry";
+import { apply, invert, type XY } from "../editor/geometry";
 import { History } from "../editor/history";
-import { CelCache, cameraAt, drawLayers, drawOutput } from "../editor/output";
+import { CSS_BLEND, CelCache, cameraAt, drawLayers, drawOutput, placementAt, type Placement } from "../editor/output";
 import { LayeredFrame, drawThumbnail, type Ctx } from "../editor/render";
 import type { Sample } from "../editor/stabilizer";
 import {
@@ -287,9 +290,11 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const sizeSlider = h("div", { class: "vslider", role: "slider", "aria-label": "Brush size", tabindex: 0 }, h("div", { class: "track" }), sizeFill, sizeKnob);
   const sizeValue = h("div", { class: "rail-value" });
   const stabBtn = iconButton("stabilizer", "Stabiliser");
+  const railGrip = h("div", { class: "rail-grip", role: "button", "aria-label": "Move the toolbar", title: "Drag to move the toolbar" }, icon("grip"));
   const rail = h(
     "div",
     { class: "rail" },
+    railGrip,
     toolButtons.select,
     toolButtons.brush,
     toolButtons.scatter,
@@ -442,7 +447,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     thumbnail: (cel, w, hh) => thumbFor(cel, w, hh),
     peaks: (asset) => audio.peaks(asset),
   });
-  const timeline = h("footer", { class: "timeline" }, transport, tl.el, fileInput);
+  const tlGrip = h("div", { class: "tl-grip", role: "separator", "aria-orientation": "horizontal", "aria-label": "Resize the timeline", title: "Drag to resize · double-click to reset" });
+  const timeline = h("footer", { class: "timeline" }, tlGrip, transport, tl.el, fileInput);
   const toast = h("div", { class: "toast", role: "status" });
   const root = h("div", { class: "editor" }, topbar, workspace, timeline, toast);
 
@@ -501,11 +507,34 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     ctx.drawImage(el, (W - w * k) / 2, (H - hh * k) / 2, w * k, hh * k);
   };
 
+  /**
+   * Whether the edited layer has to be drawn in with every other layer, not on a canvas of
+   * its own: it is clipped, or a layer above it blends or clips (and so needs it underneath).
+   */
+  const unified = (): boolean => {
+    const p = project();
+    const l = p.layers[layerIdx];
+    return l !== undefined && (l.clip || p.layers.some((x, i) => i > layerIdx && (x.blend !== "normal" || x.clip)));
+  };
+
+  /** Where the edited layer is drawn at the playhead (its motion). */
+  const placement = (): Placement => {
+    const l = project().layers[layerIdx];
+    return l === undefined ? { m: [1, 0, 0, 1, 0, 0], fade: 1 } : placementAt(l, t);
+  };
+
   /** Every layer below and above the one being edited, at the playhead. */
   const renderScene = (): void => {
     const p = project();
     belowCtx.clearRect(0, 0, W, H);
     aboveCtx.clearRect(0, 0, W, H);
+    if (unified()) {
+      const paint = (c: Ctx): void => {
+        if (currentCel() !== undefined) layers.composite(c, drafts);
+      };
+      drawLayers(belowCtx, p, t, cache, { reference, override: { index: layerIdx, paint } });
+      return;
+    }
     const below = p.layers.flatMap((_, i) => (i < layerIdx ? [i] : []));
     const above = p.layers.flatMap((_, i) => (i > layerIdx ? [i] : []));
     drawLayers(belowCtx, p, t, cache, { layers: below, reference });
@@ -539,9 +568,14 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const composite = (): void => {
     inkCtx.clearRect(0, 0, W, H);
     const l = drawing();
-    if (l !== undefined && l.visible && currentCel() !== undefined) {
+    const together = unified();
+    inkCanvas.style.mixBlendMode = l === undefined || together ? "normal" : CSS_BLEND[l.blend];
+    const at = placement();
+    if (together) renderScene();
+    else if (l !== undefined && l.visible && currentCel() !== undefined) {
       inkCtx.save();
-      inkCtx.globalAlpha = l.opacity;
+      inkCtx.transform(...at.m);
+      inkCtx.globalAlpha = l.opacity * at.fade;
       layers.composite(inkCtx, drafts);
       inkCtx.restore();
     }
@@ -574,7 +608,13 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       guideCtx.stroke();
       guideCtx.restore();
     }
-    if (guideDraw !== null) guideDraw(guideCtx, px);
+    if (guideDraw !== null) {
+      // Tools draw their guides where they work: in the edited layer's own space.
+      guideCtx.save();
+      guideCtx.transform(...at.m);
+      guideDraw(guideCtx, px);
+      guideCtx.restore();
+    }
   };
 
   const compositeSoon = (): void => {
@@ -739,10 +779,12 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   const fitView = (): void => {
     const r = workspace.getBoundingClientRect();
-    // Keep the paper clear of the floating tool rail on the left.
-    const railSpace = rail.getBoundingClientRect().right - r.left;
+    // Keep the paper clear of the floating tool rail, on whichever edge it is.
+    const rr = rail.getBoundingClientRect();
+    const right = settings.railSide === "right";
+    const railSpace = Math.max(0, Math.min(r.width / 2, right ? r.right - rr.left : rr.right - r.left));
     const fitted = fit(W, H, r.width - railSpace, r.height);
-    view = { ...fitted, tx: fitted.tx + railSpace };
+    view = { ...fitted, tx: fitted.tx + (right ? 0 : railSpace) };
     renderView();
   };
 
@@ -1008,7 +1050,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     const a = anchor.getBoundingClientRect();
     const p = pop.getBoundingClientRect();
     if (anchor.closest(".rail") !== null) {
-      pop.style.left = `${a.right - ws.left + 10}px`;
+      pop.style.left = settings.railSide === "right" ? `${a.left - ws.left - p.width - 10}px` : `${a.right - ws.left + 10}px`;
       pop.style.top = `${Math.max(8, Math.min(ws.height - p.height - 8, a.top - ws.top + a.height / 2 - p.height / 2))}px`;
       pop.style.bottom = "";
     } else {
@@ -1738,6 +1780,83 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     };
   })();
 
+  // Layout: the tool rail moves, the timeline resizes ------------------------------------
+
+  const placeRail = (): void => {
+    rail.classList.toggle("right", settings.railSide === "right");
+    rail.style.top = `${settings.railTop * 100}%`;
+  };
+  const sizeTimeline = (): void => {
+    root.style.setProperty("--tl-h", settings.timelineHeight === 0 ? "" : `${settings.timelineHeight}px`);
+    root.classList.toggle("tl-sized", settings.timelineHeight !== 0);
+  };
+  const setupLayout = (opts: AddEventListenerOptions): void => {
+    // Drag the rail's grip anywhere; let go and it settles on the nearer edge, at that height.
+    let railDrag: { dx: number; dy: number } | undefined;
+    railGrip.addEventListener("pointerdown", (e) => {
+      const r = rail.getBoundingClientRect();
+      railDrag = { dx: e.clientX - r.left, dy: e.clientY - (r.top + r.height / 2) };
+      capture(railGrip, e.pointerId);
+      rail.classList.add("dragging");
+      e.preventDefault();
+    }, opts);
+    railGrip.addEventListener("pointermove", (e) => {
+      if (railDrag === undefined) return;
+      const ws = workspace.getBoundingClientRect();
+      rail.classList.remove("right");
+      rail.style.left = `${Math.max(0, Math.min(ws.width - rail.offsetWidth, e.clientX - ws.left - railDrag.dx))}px`;
+      rail.style.top = `${Math.max(0, Math.min(ws.height, e.clientY - ws.top - railDrag.dy))}px`;
+    }, opts);
+    const drop = (e: PointerEvent): void => {
+      if (railDrag === undefined) return;
+      railDrag = undefined;
+      rail.classList.remove("dragging");
+      const ws = workspace.getBoundingClientRect();
+      const r = rail.getBoundingClientRect();
+      rail.style.left = "";
+      const half = r.height / 2 / Math.max(1, ws.height);
+      const top = Math.max(half, Math.min(1 - half, (r.top + r.height / 2 - ws.top) / Math.max(1, ws.height)));
+      const side = parseRailSide(e.clientX - ws.left > ws.width / 2 ? "right" : "left");
+      const at = parseFraction(Number.isFinite(top) ? top : 0.5);
+      if (side.ok) updateSettings("railSide", side.value);
+      if (at.ok) updateSettings("railTop", at.value);
+      placeRail();
+    };
+    railGrip.addEventListener("pointerup", drop, opts);
+    railGrip.addEventListener("pointercancel", drop, opts);
+
+    // Drag the timeline's top edge for more or less room; double-click lets it size itself.
+    let tlDrag: { y: number; h: number } | undefined;
+    tlGrip.addEventListener("pointerdown", (e) => {
+      tlDrag = { y: e.clientY, h: tl.el.getBoundingClientRect().height };
+      capture(tlGrip, e.pointerId);
+      e.preventDefault();
+    }, opts);
+    tlGrip.addEventListener("pointermove", (e) => {
+      if (tlDrag === undefined) return;
+      const room = root.getBoundingClientRect().height - 160;
+      const next = parsePanelHeight(Math.round(Math.max(60, Math.min(room, 1200, tlDrag.h + tlDrag.y - e.clientY))));
+      if (next.ok) {
+        updateSettings("timelineHeight", next.value);
+        sizeTimeline();
+      }
+    }, opts);
+    const settle = (): void => {
+      tlDrag = undefined;
+      requestAnimationFrame(fitView);
+    };
+    tlGrip.addEventListener("pointerup", settle, opts);
+    tlGrip.addEventListener("pointercancel", settle, opts);
+    tlGrip.addEventListener("dblclick", () => {
+      const auto = parsePanelHeight(0);
+      if (auto.ok) updateSettings("timelineHeight", auto.value);
+      sizeTimeline();
+      requestAnimationFrame(fitView);
+    }, opts);
+    placeRail();
+    sizeTimeline();
+  };
+
   // Playback ----------------------------------------------------------------------------
 
   let raf = 0;
@@ -1820,7 +1939,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   const local = (s: PenSample): Sample => {
     const r = workspace.getBoundingClientRect();
-    const [x, y] = toCanvas(view, s.clientX - r.left, s.clientY - r.top);
+    const [cx, cy] = toCanvas(view, s.clientX - r.left, s.clientY - r.top);
+    // Into the edited layer's own space, so drawing on a moved layer lands under the pen.
+    const [x, y] = apply(invert(placement().m), cx, cy);
     return { x, y, pressure: s.pressure };
   };
 
@@ -1954,6 +2075,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   // Wiring ------------------------------------------------------------------------------
 
   const opts = { signal };
+  setupLayout(opts);
 
   workspace.addEventListener(
     "pointerdown",

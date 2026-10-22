@@ -18,6 +18,13 @@ if (app === null) throw new Error("index.html has no #app");
 
 disableSystemMenu();
 
+// The page itself never zooms: iPad Safari zooms on a double tap or a pinch even with
+// user-scalable=no, and a zoomed app is hard to get back. Pinches on the canvas zoom the
+// canvas; double taps are stopped by touch-action in the stylesheet, which keeps quick
+// taps on buttons as clicks.
+document.addEventListener("gesturestart", (e) => { e.preventDefault(); }, { passive: false });
+document.addEventListener("dblclick", (e) => { e.preventDefault(); }, { passive: false });
+
 // The app shell is cached by a service worker, so it opens with the server out of reach.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

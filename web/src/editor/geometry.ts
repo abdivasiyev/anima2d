@@ -223,6 +223,14 @@ export const compose = (m: Affine, n: Affine): Affine => [
 
 export const translate = (dx: number, dy: number): Affine => [1, 0, 0, 1, dx, dy];
 
+/** The transform that undoes `m` (the identity when `m` flattens everything). */
+export const invert = (m: Affine): Affine => {
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (Math.abs(det) < 1e-12) return IDENTITY;
+  const [a, b, c, d, e, f] = m;
+  return [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det];
+};
+
 export const about = (cx: number, cy: number, m: Affine): Affine => compose(translate(cx, cy), compose(m, translate(-cx, -cy)));
 
 export const rotation = (a: number): Affine => [Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), 0, 0];

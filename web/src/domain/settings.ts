@@ -98,7 +98,28 @@ export interface SettingsFields {
   readonly pingPong: boolean;
   /** Play through the camera. */
   readonly cameraView: boolean;
+  /** The timeline's rows area in CSS pixels; 0 lets it size itself. */
+  readonly timelineHeight: PanelHeight;
+  /** Which edge the tool rail sits on, and how far down it (0 top to 1 bottom). */
+  readonly railSide: RailSide;
+  readonly railTop: Fraction;
+  /** Title- and action-safe frames over the canvas. */
+  readonly safeAreas: boolean;
+  /** A grid with the thirds marked. */
+  readonly grid: boolean;
 }
+
+export const RAIL_SIDES = ["left", "right"] as const;
+export type RailSide = (typeof RAIL_SIDES)[number];
+export const parseRailSide = oneOf(RAIL_SIDES, 'expected a side of "left" or "right"');
+
+export type PanelHeight = Brand<number, "PanelHeight">;
+export const parsePanelHeight = (raw: unknown): Result<PanelHeight> =>
+  andThen(integer(raw), (n) => (n === 0 || (n >= 60 && n <= 1200) ? ok(brandChecked<number, "PanelHeight">(n)) : err("expected 0 or a height from 60 to 1200")));
+
+export type Fraction = Brand<number, "Fraction">;
+export const parseFraction = (raw: unknown): Result<Fraction> =>
+  andThen(number(raw), (n) => (n >= 0 && n <= 1 ? ok(brandChecked<number, "Fraction">(n)) : err("expected a fraction from 0 to 1")));
 
 export type Settings = Brand<SettingsFields, "Settings">;
 
@@ -126,6 +147,11 @@ const DEFAULTS = {
   speed: 1,
   pingPong: false,
   cameraView: true,
+  timelineHeight: 0,
+  railSide: "left",
+  railTop: 0.5,
+  safeAreas: false,
+  grid: false,
 } as const;
 
 /** Each field from `raw` if it parses, else its default: settings never fail to load. */
@@ -162,6 +188,11 @@ export const parseSettings = (raw: unknown): Settings => {
     speed: get("speed", parseSpeed),
     pingPong: get("pingPong", parseBool),
     cameraView: get("cameraView", parseBool),
+    timelineHeight: get("timelineHeight", parsePanelHeight),
+    railSide: get("railSide", parseRailSide),
+    railTop: get("railTop", parseFraction),
+    safeAreas: get("safeAreas", parseBool),
+    grid: get("grid", parseBool),
   });
 };
 
