@@ -15,15 +15,18 @@ import Anima.Types.Project hiding (duration)
 import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, try)
 import Control.Monad (forM, forM_, unless, void, when, zipWithM_)
+import Data.Char (toLower)
 import Data.GI.Base (AttrOp (..), get, new, on)
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Text (Text)
 import Numeric (showHex)
+import System.FilePath (takeBaseName, takeExtension)
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import GI.Cairo.Render qualified as C
@@ -42,6 +45,7 @@ import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
 import Anima.Desktop.Scene (Env (..), celAt, drawFrame, drawLayers, duration, newCache, placement)
 import Anima.Desktop.Style (accent, applyStyle, dimText, ground, hairline, iconImage, rgb, rgba, rounded, surface, textColour, uiText, workspace)
+import Anima.Desktop.Video (frameAt, lengthOf, newFrames)
 
 import Anima.Desktop.Fill qualified as Fill
 import Anima.Desktop.Geometry qualified as Geometry
@@ -65,6 +69,19 @@ data SelMode = Moving | Scaling | Turning
 
 -- | A selection being dragged: how, from where, about which point, and the change so far.
 data SelDrag = SelDrag {mode :: SelMode, from :: (Double, Double), centre :: (Double, Double), current :: M.Matrix}
+
+{- | The reference board: which reference is shown, how each is zoomed and panned, the
+eyedropper, and the moment of each video that plays on its own.
+-}
+data Board = Board
+    { showing :: Int
+    , views :: Map.Map Text (Double, Double, Double)
+    , picking :: Bool
+    , own :: Map.Map Text Double
+    , ownPlay :: Maybe GLib.Source
+    , shown :: [(Text, Media, Bool)]
+    , panFrom :: Maybe (Double, Double, Double, Double)
+    }
 
 -- | A stroke or shape being drawn: its points in the layer's own space.
 data Draft = Draft {pts :: [(Double, Double, Double)], start :: (Double, Double), seed :: Int}
@@ -168,6 +185,8 @@ data Window = Window
     , key :: Text -> Bool -> Bool -> IO Bool
     , keyUp :: Text -> IO Bool
     , click :: Text -> IO ()
+    , addReferenceFile :: FilePath -> IO ()
+    -- ^ A picture or video file onto the reference board, as + does after its dialog.
     }
 
 data Phase = Press | Move | Release
@@ -189,6 +208,8 @@ data Probe = Probe
     , onLayer :: Int
     , atFrame :: Int
     , screenOf :: (Double, Double) -> (Double, Double)
+    , boardShows :: Bool
+    -- ^ Whether the board has a picture or still on screen.
     }
 
 runApp :: IO ()
@@ -214,6 +235,10 @@ buildWindow :: IO Window
 buildWindow = do
     applyStyle
     st <- newIORef initial
+    frames <- cacheFolder >>= newFrames
+    videoFiles <- newIORef (Map.empty :: Map.Map Text (Maybe FilePath))
+    boardRef <- newIORef Board {showing = 0, views = Map.empty, picking = False, own = Map.empty, ownPlay = Nothing, shown = [], panFrom = Nothing}
+    boardSyncing <- newIORef False
     win <- new Gtk.Window [#title := "anima2D", #defaultWidth := 1360, #defaultHeight := 880]
     -- The title bar: back to the projects, undo and redo, whether it is saved; the
     -- connection, a new project (on the list) and the sidebar.
@@ -369,7 +394,58 @@ buildWindow = do
     Gtk.boxPackStart left work True True 0
     Gtk.boxPackStart left transport False False 0
     Gtk.boxPackStart left timeline False False 0
-    chat <- chatPlaceholder
+    -- The sidebar: the reference board and the assistant, one at a time.
+    boardChips <- Gtk.boxNew Gtk.OrientationHorizontal 4
+    chipsScroll <- new Gtk.ScrolledWindow [#vscrollbarPolicy := Gtk.PolicyTypeNever, #hscrollbarPolicy := Gtk.PolicyTypeAutomatic]
+    Gtk.containerAdd chipsScroll boardChips
+    boardAdd <- iconButton "add" "Add a picture or video…"
+    boardTop <- Gtk.boxNew Gtk.OrientationHorizontal 4
+    addClass boardTop "board-top"
+    Gtk.boxPackStart boardTop chipsScroll True True 0
+    Gtk.boxPackEnd boardTop boardAdd False False 0
+    boardView <- new Gtk.DrawingArea []
+    Gtk.widgetAddEvents boardView [Gdk.EventMaskButtonPressMask, Gdk.EventMaskButtonReleaseMask, Gdk.EventMaskPointerMotionMask, Gdk.EventMaskScrollMask, Gdk.EventMaskSmoothScrollMask]
+    boardEmpty <- Gtk.labelNew (Just "Add a picture or video to keep in view while you draw: + above.")
+    addClass boardEmpty "dim"
+    Gtk.labelSetLineWrap boardEmpty True
+    Gtk.labelSetMaxWidthChars boardEmpty 30
+    Gtk.labelSetJustify boardEmpty Gtk.JustificationCenter
+    followB <- Gtk.toggleButtonNew
+    iconInto followB "pin" "Follow the playhead"
+    ownPlayB <- iconButton "play" "Play the video"
+    scrubS <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 1 0.001
+    Gtk.scaleSetDrawValue scrubS False
+    pickB <- Gtk.toggleButtonNew
+    iconInto pickB "eyedropper" "Take a colour from it"
+    traceB <- iconButton "trace" "Trace it: put it under the drawings"
+    removeRefB <- iconButton "remove" "Remove from the board"
+    videoRow <- Gtk.boxNew Gtk.OrientationHorizontal 2
+    Gtk.boxPackStart videoRow followB False False 0
+    Gtk.boxPackStart videoRow ownPlayB False False 0
+    Gtk.boxPackStart videoRow scrubS True True 0
+    boardFoot <- Gtk.boxNew Gtk.OrientationHorizontal 2
+    addClass boardFoot "transport"
+    Gtk.boxPackStart boardFoot videoRow True True 0
+    forM_ [toW removeRefB, toW traceB, toW pickB] $ \mk -> mk >>= \x -> Gtk.boxPackEnd boardFoot x False False 0
+    boardPage <- Gtk.boxNew Gtk.OrientationVertical 0
+    Gtk.boxPackStart boardPage boardTop False False 0
+    Gtk.boxPackStart boardPage boardView True True 0
+    Gtk.boxPackStart boardPage boardEmpty True True 0
+    Gtk.boxPackStart boardPage boardFoot False False 0
+    assistant <- chatPlaceholder
+    side <- new Gtk.Stack [#transitionType := Gtk.StackTransitionTypeCrossfade, #transitionDuration := 100]
+    Gtk.stackAddTitled side boardPage "board" "References"
+    Gtk.stackAddTitled side assistant "assistant" "Assistant"
+    switcher <- Gtk.stackSwitcherNew
+    Gtk.stackSwitcherSetStack switcher (Just side)
+    Gtk.widgetSetHalign switcher Gtk.AlignCenter
+    Gtk.widgetSetMarginTop switcher 8
+    Gtk.widgetSetMarginBottom switcher 6
+    chat <- Gtk.boxNew Gtk.OrientationVertical 0
+    addClass chat "sidebar"
+    Gtk.widgetSetSizeRequest chat 320 (-1)
+    Gtk.boxPackStart chat switcher False False 0
+    Gtk.boxPackStart chat side True True 0
     paned <- Gtk.panedNew Gtk.OrientationHorizontal
     Gtk.panedPack1 paned left True False
     Gtk.panedPack2 paned chat False False
@@ -387,7 +463,75 @@ buildWindow = do
             Gtk.widgetSetVisible chatBtn editing
             Gtk.widgetSetVisible newBtn (not editing)
     let
-        redraw = Gtk.widgetQueueDraw canvas >> Gtk.widgetQueueDraw timeline >> showCounter
+        redraw = Gtk.widgetQueueDraw canvas >> Gtk.widgetQueueDraw timeline >> showCounter >> refreshBoard
+        -- Videos: the local file (fetched in the background for a server), then a still.
+        videoFile asset = do
+            known <- Map.lookup asset <$> readIORef videoFiles
+            case known of
+                Just path -> pure path
+                Nothing -> do
+                    modifyIORef' videoFiles (Map.insert asset Nothing)
+                    s <- readIORef st
+                    forM_ s.backend $ \b -> background (b.picture asset) $ \path -> modifyIORef' videoFiles (Map.insert asset path) >> redraw
+                    pure Nothing
+        videoStill asset seconds = videoFile asset >>= maybe (pure Nothing) (\path -> frameAt frames asset path seconds (onMain (Gtk.widgetQueueDraw canvas >> Gtk.widgetQueueDraw boardView)))
+        boardRefs = do
+            s <- readIORef st
+            pure (maybe [] (\o -> o.view.board) s.open)
+        currentRef = do
+            rs <- boardRefs
+            b <- readIORef boardRef
+            pure (lookup b.showing (zip [0 ..] rs))
+        -- The board's chips and buttons, from the project's references.
+        refreshBoard = do
+            rs <- boardRefs
+            b <- readIORef boardRef
+            let
+                now = [(r.name, r.media, r.follows) | r <- rs]
+                chosen' = max 0 (min b.showing (length rs - 1))
+            when (now /= b.shown || chosen' /= b.showing) $ do
+                writeIORef boardRef b {shown = now, showing = chosen'}
+                kids <- Gtk.containerGetChildren boardChips
+                mapM_ Gtk.widgetDestroy kids
+                forM_ (zip [0 ..] rs) $ \(i, r) -> do
+                    chip <- Gtk.buttonNewWithLabel r.name
+                    addClass chip "chip"
+                    when (i == chosen') (addClass chip "on")
+                    _ <- on chip #clicked $ do
+                        modifyIORef' boardRef (\x -> x {showing = i, shown = [], picking = False})
+                        refreshBoard
+                    Gtk.boxPackStart boardChips chip False False 0
+                Gtk.widgetShowAll boardChips
+            cur <- currentRef
+            bd <- readIORef boardRef
+            Gtk.widgetSetVisible chipsScroll (length rs > 1)
+            Gtk.widgetSetVisible boardView (isJust cur)
+            Gtk.widgetSetVisible boardEmpty (isNothing cur)
+            Gtk.widgetSetVisible boardFoot (isJust cur)
+            writeIORef boardSyncing True
+            case cur of
+                Just r | r.media == Video -> do
+                    Gtk.widgetSetVisible videoRow True
+                    Gtk.toggleButtonSetActive followB r.follows
+                    Gtk.widgetSetVisible ownPlayB (not r.follows)
+                    Gtk.widgetSetVisible scrubS (not r.follows)
+                _ -> Gtk.widgetSetVisible videoRow False
+            Gtk.toggleButtonSetActive pickB bd.picking
+            writeIORef boardSyncing False
+            Gtk.widgetQueueDraw boardView
+        stopOwnPlay = do
+            b <- readIORef boardRef
+            forM_ b.ownPlay GLib.sourceDestroy
+            writeIORef boardRef b {ownPlay = Nothing}
+            iconInto ownPlayB "play" "Play the video"
+        -- Every picture again, after one is added (the canvas and the board draw from them).
+        refreshPictures = do
+            s <- readIORef st
+            case (s.backend, s.open) of
+                (Just b, Just o) -> background (loadPictures b o.view) $ \pics -> do
+                    modifyIORef' st (\x -> x {open = fmap (\o2 -> o2 {env = o2.env {pictures = pics}}) x.open})
+                    redraw
+                _ -> pure ()
         showCounter = do
             s <- readIORef st
             case s.open of
@@ -658,6 +802,188 @@ buildWindow = do
     _ <- on colourB #colorSet (getColour colourB >>= \c -> modifyIORef' st (\s -> s {colour = c}))
     _ <- on sizeS #valueChanged (Gtk.rangeGetValue sizeS >>= \v -> modifyIORef' st (\s -> s {penSize = v}))
     _ <- on alphaS #valueChanged (Gtk.rangeGetValue alphaS >>= \v -> modifyIORef' st (\s -> s {penAlpha = v}))
+    -- The reference board: add, follow or play, take a colour, trace, remove; zoom and pan.
+    lastStills <- newIORef (Map.empty :: Map.Map Text C.Surface)
+    let
+        addReferenceFile path = do
+            s <- readIORef st
+            forM_ s.backend $ \b -> do
+                say "Adding to the board…"
+                background (b.upload path) $ \case
+                    Left why -> say why
+                    Right asset -> do
+                        let
+                            video = map toLower (takeExtension path) `elem` [".mp4", ".m4v", ".mov", ".webm"]
+                            base = Text.strip (Text.take 40 (Text.pack (takeBaseName path)))
+                        rs <- boardRefs
+                        modifyIORef' boardRef (\x -> x {showing = length rs})
+                        commit (addReference (Aeson.object ["asset" Aeson..= asset, "media" Aeson..= (if video then "video" else "image" :: Text), "name" Aeson..= (if Text.null base then "Reference" else base), "follow" Aeson..= True]))
+                        refreshPictures
+                        say "Added to the board"
+        endOwnPlay = do
+            modifyIORef' boardRef (\x -> x {ownPlay = Nothing})
+            iconInto ownPlayB "play" "Play the video"
+        -- What the board shows now: a picture, or the video's still (the last one while the
+        -- next is being made).
+        boardSurface = do
+            cur <- currentRef
+            s <- readIORef st
+            b <- readIORef boardRef
+            case (cur, s.open) of
+                (Just r, Just o) -> do
+                    found <- case r.media of
+                        Image -> pure (Map.lookup r.asset o.env.pictures)
+                        Video -> videoStill r.asset (if r.follows then fromIntegral s.playhead / fromIntegral (max 1 o.view.rate) else Map.findWithDefault 0 r.asset b.own)
+                    case found of
+                        Just sf -> modifyIORef' lastStills (Map.insert r.asset sf) >> pure (Just (r, sf))
+                        Nothing -> fmap (r,) . Map.lookup r.asset <$> readIORef lastStills
+                _ -> pure Nothing
+        boardGeometry r sf = do
+            w <- fromIntegral <$> Gtk.widgetGetAllocatedWidth boardView
+            h <- fromIntegral <$> Gtk.widgetGetAllocatedHeight boardView
+            sw <- fromIntegral <$> C.imageSurfaceGetWidth sf
+            sh <- fromIntegral <$> C.imageSurfaceGetHeight sf
+            b <- readIORef boardRef
+            pure (w, h, boardPlace w h (Map.findWithDefault (1, 0, 0) r.asset b.views) (max 1 sw, max 1 sh))
+    _ <- on boardAdd #clicked (chooseFile win >>= mapM_ addReferenceFile)
+    _ <- on followB #toggled $ do
+        syncing <- readIORef boardSyncing
+        unless syncing $ do
+            b <- readIORef boardRef
+            following <- Gtk.toggleButtonGetActive followB
+            stopOwnPlay
+            commit (setReferenceFollow b.showing following)
+    _ <- on pickB #toggled $ do
+        syncing <- readIORef boardSyncing
+        unless syncing $ Gtk.toggleButtonGetActive pickB >>= \picked -> modifyIORef' boardRef (\x -> x {picking = picked})
+    _ <- on traceB #clicked $ do
+        b <- readIORef boardRef
+        commit (traceReference b.showing)
+        modifyIORef' st (\x -> x {layer = x.layer + 1})
+        say "Under the drawings as a locked layer at half strength"
+    _ <- on removeRefB #clicked $ do
+        b <- readIORef boardRef
+        stopOwnPlay
+        commit (removeReferenceAt b.showing)
+    _ <- on ownPlayB #clicked $ do
+        b <- readIORef boardRef
+        case b.ownPlay of
+            Just _ -> stopOwnPlay
+            Nothing -> do
+                -- Twelve stills a second: each is a moment ffmpeg cuts out.
+                src <- GLib.timeoutSourceNew 83
+                GLib.sourceSetCallback src $ do
+                    cur <- currentRef
+                    case cur of
+                        Just r
+                            | r.media == Video
+                            , not r.follows -> do
+                                path <- videoFile r.asset
+                                len <- maybe (pure Nothing) (\pth -> lengthOf frames r.asset pth (pure ())) path
+                                modifyIORef' boardRef $ \x ->
+                                    let
+                                        t = Map.findWithDefault 0 r.asset x.own + 1 / 12
+                                    in
+                                        x {own = Map.insert r.asset (maybe t (\l -> if t >= l then 0 else t) len) x.own}
+                                x <- readIORef boardRef
+                                forM_ len $ \l -> do
+                                    writeIORef boardSyncing True
+                                    Gtk.rangeSetValue scrubS (Map.findWithDefault 0 r.asset x.own / max 0.001 l)
+                                    writeIORef boardSyncing False
+                                Gtk.widgetQueueDraw boardView
+                                pure True
+                        _ -> endOwnPlay >> pure False
+                _ <- GLib.sourceAttach src Nothing
+                writeIORef boardRef b {ownPlay = Just src}
+                iconInto ownPlayB "pause" "Pause the video"
+    _ <- on scrubS #valueChanged $ do
+        syncing <- readIORef boardSyncing
+        cur <- currentRef
+        case cur of
+            Just r
+                | not syncing
+                , r.media == Video -> do
+                    stopOwnPlay
+                    v <- Gtk.rangeGetValue scrubS
+                    path <- videoFile r.asset
+                    len <- maybe (pure Nothing) (\pth -> lengthOf frames r.asset pth (onMain (Gtk.widgetQueueDraw boardView))) path
+                    forM_ len $ \l -> modifyIORef' boardRef (\x -> x {own = Map.insert r.asset (v * l) x.own})
+                    Gtk.widgetQueueDraw boardView
+            _ -> pure ()
+    _ <- on boardView #draw $ \ctx -> do
+        found <- boardSurface
+        geo <- traverse (\(r, sf) -> (sf,) <$> boardGeometry r sf) found
+        Connector.renderWithContext
+            ( do
+                rgb workspace
+                C.paint
+                forM_ geo $ \(sf, (_, _, (x, y, k))) -> do
+                    C.save
+                    C.translate x y
+                    C.scale k k
+                    C.setSourceSurface sf 0 0
+                    C.paint
+                    C.restore
+            )
+            ctx
+        pure True
+    _ <- on boardView #event $ \ev -> do
+        kind <- Gdk.eventGetEventType ev
+        (_, x, y) <- Gdk.eventGetCoords ev
+        found <- boardSurface
+        b <- readIORef boardRef
+        case (kind, found) of
+            (Gdk.EventType2buttonPress, Just (r, _)) -> do
+                writeIORef boardRef b {views = Map.delete r.asset b.views, panFrom = Nothing}
+                Gtk.widgetQueueDraw boardView
+                pure True
+            (Gdk.EventTypeButtonPress, Just (r, sf))
+                | b.picking -> do
+                    (_, _, (ox, oy, k)) <- boardGeometry r sf
+                    picked <- pixelAt sf (floor ((x - ox) / k)) (floor ((y - oy) / k))
+                    forM_ picked $ \hex -> do
+                        setColour colourB hex
+                        modifyIORef' st (\s' -> s' {colour = hex})
+                        modifyIORef' boardRef (\x' -> x' {picking = False})
+                        say ("Colour " <> hex)
+                        refreshBoard
+                    pure True
+                | otherwise -> do
+                    let
+                        (_, vx, vy) = Map.findWithDefault (1, 0, 0) r.asset b.views
+                    writeIORef boardRef b {panFrom = Just (x, y, vx, vy)}
+                    pure True
+            (Gdk.EventTypeMotionNotify, Just (r, _)) | Just (x0, y0, vx, vy) <- b.panFrom -> do
+                let
+                    (vk, _, _) = Map.findWithDefault (1, 0, 0) r.asset b.views
+                writeIORef boardRef b {views = Map.insert r.asset (vk, vx + x - x0, vy + y - y0) b.views}
+                Gtk.widgetQueueDraw boardView
+                pure True
+            (Gdk.EventTypeButtonRelease, _) -> writeIORef boardRef b {panFrom = Nothing} >> pure True
+            _ -> pure False
+    _ <- on boardView #scrollEvent $ \ev -> do
+        dy <- get ev #deltaY
+        dir <- get ev #direction
+        x <- get ev #x
+        y <- get ev #y
+        found <- boardSurface
+        forM_ found $ \(r, _) -> do
+            w <- fromIntegral <$> Gtk.widgetGetAllocatedWidth boardView
+            h <- fromIntegral <$> Gtk.widgetGetAllocatedHeight boardView
+            b <- readIORef boardRef
+            let
+                (vk, vx, vy) = Map.findWithDefault (1, 0, 0) r.asset b.views
+                amount = case dir of
+                    Gdk.ScrollDirectionUp -> -1
+                    Gdk.ScrollDirectionDown -> 1
+                    _ -> dy / 3
+                k' = max 0.2 (min 40 (vk * exp (-(amount * 0.15))))
+                f = k' / vk
+                px = x - w / 2
+                py = y - h / 2
+            writeIORef boardRef b {views = Map.insert r.asset (k', px - (px - vx) * f, py - (py - vy) * f) b.views}
+        Gtk.widgetQueueDraw boardView
+        pure True
     -- The canvas: drawn from the open project and the stroke in progress.
     _ <- on canvas #draw $ \ctx -> do
         w <- fromIntegral <$> Gtk.widgetGetAllocatedWidth canvas
@@ -671,7 +997,12 @@ buildWindow = do
                 writeIORef st s'
                 pure s'
             _ -> pure s0
-        Connector.renderWithContext (drawCanvas s (finish s)) ctx
+        under <- case s.open of
+            Nothing -> pure []
+            Just o -> fmap catMaybes . forM [(l, a, m) | l@LayerView {kind = ReferenceView a m} <- o.view.stack, l.visible] $ \(l, a, m) -> case m of
+                Image -> pure ((l.opacity,) <$> Map.lookup a o.env.pictures)
+                Video -> fmap (l.opacity,) <$> videoStill a (fromIntegral s.playhead / fromIntegral (max 1 o.view.rate))
+        Connector.renderWithContext (drawCanvas s under (finish s)) ctx
         pure True
     -- A canvas that changes size fits the paper again.
     lastSize <- newIORef (0, 0)
@@ -924,6 +1255,7 @@ buildWindow = do
     chrome False
     let
         probe = do
+            onBoard <- boardSurface
             s <- readIORef st
             msg <- Gtk.labelGetText saveState
             pure
@@ -937,10 +1269,13 @@ buildWindow = do
                     , onLayer = s.layer
                     , atFrame = s.playhead
                     , screenOf = \(cx, cy) -> (s.panX + cx * s.magnify, s.panY + cy * s.magnify)
+                    , boardShows = isJust onBoard
                     }
-        buttons = [("+ Drawing", newCelB), ("Duplicate", dupCelB), ("Delete drawing", delCelB), ("Hold +", moreB), ("Hold −", lessB), ("+ Layer", addLayerB), ("Hide layer", hideB), ("Lock layer", lockB), ("Delete layer", delLayerB), ("Undo", undoBtn), ("Redo", redoBtn), ("Play", playBtn), ("◀", prevBtn), ("▶", nextBtn), ("Fit", fitBtn)]
-        clickNamed n = forM_ (lookup n buttons) Gtk.buttonClicked
-    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed}
+        buttons = [("+ Drawing", newCelB), ("Duplicate", dupCelB), ("Delete drawing", delCelB), ("Hold +", moreB), ("Hold −", lessB), ("+ Layer", addLayerB), ("Hide layer", hideB), ("Lock layer", lockB), ("Delete layer", delLayerB), ("Undo", undoBtn), ("Redo", redoBtn), ("Play", playBtn), ("◀", prevBtn), ("▶", nextBtn), ("Fit", fitBtn), ("Trace", traceB), ("Remove reference", removeRefB)]
+        clickNamed n = case n of
+            "Follow" -> Gtk.buttonClicked followB
+            _ -> forM_ (lookup n buttons) Gtk.buttonClicked
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
@@ -990,7 +1325,10 @@ reopen o p = do
 loadPictures :: Backend -> ProjectView -> IO Pictures
 loadPictures b v = do
     let
-        assets = [i.asset | LayerView {kind = DrawingView _ cels} <- v.stack, c <- cels, ImageV i <- c.items]
+        assets =
+            [i.asset | LayerView {kind = DrawingView _ cels} <- v.stack, c <- cels, ImageV i <- c.items]
+                <> [a | LayerView {kind = ReferenceView a Image} <- v.stack]
+                <> [r.asset | r <- v.board, r.media == Image]
     found <- forM (Map.keys (Map.fromList [(a, ()) | a <- assets])) $ \a -> do
         path <- b.picture a
         case path of
@@ -1056,8 +1394,8 @@ unitW = 16
 canvasPoint :: State -> (Double, Double) -> (Double, Double)
 canvasPoint s (x, y) = ((x - s.panX) / s.magnify, (y - s.panY) / s.magnify)
 
-drawCanvas :: State -> (Draft -> Maybe (Either Text Item)) -> C.Render ()
-drawCanvas s finishing = do
+drawCanvas :: State -> [(Double, C.Surface)] -> (Draft -> Maybe (Either Text Item)) -> C.Render ()
+drawCanvas s under finishing = do
     rgb workspace
     C.paint
     forM_ s.open $ \o -> do
@@ -1075,6 +1413,8 @@ drawCanvas s finishing = do
         C.setSourceRGB 1 1 1
         C.rectangle 0 0 pw ph
         C.fill
+        -- Reference layers, under the drawings, fitted to the paper as the browser fits them.
+        forM_ under (uncurry (drawFitted pw ph))
         -- Onion skin: the drawings before and after this one on the chosen layer, tinted.
         when (s.onion && isNothing s.playing) $ forM_ (lookup s.layer (zip [0 ..] v.stack)) $ \l -> case l.kind of
             DrawingView holdLast cels -> forM_ (celAt holdLast cels s.playhead) $ \ci ->
@@ -1355,6 +1695,63 @@ projectCard b p openIt = do
         Left _ -> pure ()
     pure btn
 
+-- | Asks for a picture or video file to put on the board.
+chooseFile :: Gtk.Window -> IO (Maybe FilePath)
+chooseFile parent = do
+    d <- new Gtk.FileChooserDialog [#title := "Add a reference", #action := Gtk.FileChooserActionOpen, #modal := True]
+    Gtk.windowSetTransientFor d (Just parent)
+    _ <- Gtk.dialogAddButton d "Cancel" (fromIntegral (fromEnum Gtk.ResponseTypeCancel))
+    _ <- Gtk.dialogAddButton d "Add" (fromIntegral (fromEnum Gtk.ResponseTypeAccept))
+    only <- Gtk.fileFilterNew
+    Gtk.fileFilterSetName only (Just "Pictures and videos")
+    forM_ ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.mp4", "*.m4v", "*.mov", "*.webm"] (Gtk.fileFilterAddPattern only)
+    Gtk.fileChooserAddFilter d only
+    answer <- Gtk.dialogRun d
+    path <- if answer == fromIntegral (fromEnum Gtk.ResponseTypeAccept) then Gtk.fileChooserGetFilename d else pure Nothing
+    Gtk.widgetDestroy d
+    pure path
+
+-- | A picture fitted into w × h, centred, at `alpha`.
+drawFitted :: Double -> Double -> Double -> C.Surface -> C.Render ()
+drawFitted w h alpha surf = do
+    sw <- fromIntegral <$> C.imageSurfaceGetWidth surf
+    sh <- fromIntegral <$> C.imageSurfaceGetHeight surf
+    when (sw > 0 && sh > 0) $ do
+        let
+            k = min (w / sw) (h / sh)
+        C.save
+        C.translate ((w - sw * k) / 2) ((h - sh * k) / 2)
+        C.scale k k
+        C.setSourceSurface surf 0 0
+        C.paintWithAlpha alpha
+        C.restore
+
+-- | Where a reference lands in the board's view: fitted, then zoomed by k and moved by (x, y).
+boardPlace :: Double -> Double -> (Double, Double, Double) -> (Double, Double) -> (Double, Double, Double)
+boardPlace w h (vk, vx, vy) (sw, sh) =
+    let
+        k = min (w / sw) (h / sh) * vk
+    in
+        ((w - sw * k) / 2 + vx, (h - sh * k) / 2 + vy, k)
+
+-- | The colour of a picture's pixel as #rrggbb, unless it is see-through.
+pixelAt :: C.Surface -> Int -> Int -> IO (Maybe Text)
+pixelAt surf px py = do
+    w <- C.imageSurfaceGetWidth surf
+    h <- C.imageSurfaceGetHeight surf
+    if px < 0 || py < 0 || px >= w || py >= h
+        then pure Nothing
+        else do
+            C.surfaceFlush surf
+            stride <- C.imageSurfaceGetStride surf
+            bytes <- C.imageSurfaceGetData surf
+            let
+                at k = fromIntegral (BS.index bytes (py * stride + px * 4 + k)) :: Int
+                a = at 3
+                un c = min 255 (if a == 0 then 0 else c * 255 `div` a)
+                hex c = let t = showHex c "" in if length t < 2 then '0' : t else t
+            pure (if a < 8 then Nothing else Just (Text.pack ('#' : concatMap (hex . un) [at 2, at 1, at 0])))
+
 -- | A project's first frame, fitted into w × h with rounded top corners.
 thumbnail :: Maybe Env -> Double -> Double -> C.Render ()
 thumbnail e w h = do
@@ -1391,18 +1788,14 @@ getColour b = do
 chatPlaceholder :: IO Gtk.Box
 chatPlaceholder = do
     box <- Gtk.boxNew Gtk.OrientationVertical 4
-    addClass box "sidebar"
-    Gtk.widgetSetSizeRequest box 300 (-1)
-    title <- Gtk.labelNew (Just "Assistant")
-    addClass title "heading"
     note <- Gtk.labelNew (Just "Chat with a model about this project comes next: it will draw, light and animate through the same tools agents use.")
     addClass note "dim"
-    forM_ [title, note] $ \l -> Gtk.labelSetXalign l 0
+    Gtk.labelSetXalign note 0
+    Gtk.widgetSetMarginTop note 12
     Gtk.labelSetLineWrap note True
     Gtk.labelSetMaxWidthChars note 34
     Gtk.widgetSetMarginStart note 14
     Gtk.widgetSetMarginEnd note 14
-    Gtk.boxPackStart box title False False 0
     Gtk.boxPackStart box note False False 0
     pure box
 

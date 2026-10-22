@@ -11,6 +11,7 @@ const names = {
   add: "plus", minus: "minus", duplicate: "copy", remove: "trash-2", onion: "layers", eye: "eye", eyeOff: "eye-off",
   lock: "lock", unlock: "lock-open", fit: "scan", image: "image", newDrawing: "square-plus", newLayer: "copy-plus",
   folder: "folder-open", server: "server", light: "lightbulb", hold: "move-horizontal",
+  pin: "pin", eyedropper: "pipette", trace: "hand", film: "film", references: "images",
 };
 
 const attrs = (o) => Object.entries(o).map(([k, v]) => `${k}="${v}"`).join(" ");

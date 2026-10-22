@@ -13,18 +13,21 @@ module Anima.Desktop.Backend
     )
 where
 
+import Anima.Ids (newUuid)
 import Anima.Store (ProjectStore (..), StoreError (..), fileStore)
 import Anima.Types.Parse (Parse (..))
-import Anima.Types.Project (Project, ProjectId, ProjectSummary, Revision, projectId, summaryRevision)
+import Anima.Types.Project (AssetId, Project, ProjectId, ProjectSummary, Revision, projectId, summaryRevision)
 import Control.Exception (SomeException, try)
 import Data.ByteString (ByteString)
+import Data.Char (toLower)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import System.Directory (doesFileExist)
-import System.FilePath ((</>))
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist)
+import System.FilePath (takeExtension, (</>))
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.CaseInsensitive qualified as CI
@@ -46,7 +49,25 @@ data Backend = Backend
     -- ^ Wait for news (a save anywhere after save number n); the latest number, or Nothing offline.
     , picture :: Text -> IO (Maybe FilePath)
     -- ^ An asset as a local file (fetched and kept, for a server).
+    , upload :: FilePath -> IO (Either Text Text)
+    -- ^ A picture, video, sound or font file stored as an asset; its id.
     }
+
+-- | The media type of a file the window offers, by its extension.
+mediaType :: FilePath -> Maybe ByteString
+mediaType path = lookup (map toLower (takeExtension path)) types
+    where
+        types =
+            [ (".png", "image/png")
+            , (".jpg", "image/jpeg")
+            , (".jpeg", "image/jpeg")
+            , (".gif", "image/gif")
+            , (".webp", "image/webp")
+            , (".mp4", "video/mp4")
+            , (".m4v", "video/mp4")
+            , (".mov", "video/quicktime")
+            , (".webm", "video/webm")
+            ]
 
 -- | Projects in a folder on this computer, through the server's own store.
 localBackend :: FilePath -> IO Backend
@@ -76,6 +97,23 @@ localBackend dir = do
                     path = dir </> "assets" </> Text.unpack asset
                 found <- doesFileExist path
                 pure (if found then Just path else Nothing)
+            , upload = \file -> case mediaType file of
+                Nothing -> pure (Left "expected a picture (PNG, JPEG, GIF, WebP) or a video (MP4, MOV, WebM)")
+                Just ctype -> do
+                    raw <- newUuid
+                    case parse @AssetId raw of
+                        Left why -> pure (Left why)
+                        Right aid -> do
+                            let
+                                assets = dir </> "assets"
+                                name = Text.unpack (unparse aid)
+                            r <- try $ do
+                                createDirectoryIfMissing True assets
+                                copyFile file (assets </> name)
+                                BS.writeFile (assets </> name <> ".type") ctype
+                            pure $ case r of
+                                Left (e :: SomeException) -> Left ("the file could not be stored (" <> Text.take 120 (Text.pack (show e)) <> ")")
+                                Right () -> Right (unparse aid)
             }
 
 showError :: StoreError -> String
@@ -160,4 +198,19 @@ remoteBackend base headers cacheDir = do
                         case r of
                             Right res | status res == 200 -> LBS.writeFile path (Http.responseBody res) >> pure (Just path)
                             _ -> pure Nothing
+            , upload = \file -> case mediaType file of
+                Nothing -> pure (Left "expected a picture (PNG, JPEG, GIF, WebP) or a video (MP4, MOV, WebM)")
+                Just ctype -> do
+                    body <- try (LBS.readFile file)
+                    case body of
+                        Left (e :: SomeException) -> pure (Left ("the file could not be read (" <> Text.take 120 (Text.pack (show e)) <> ")"))
+                        Right bytes -> do
+                            r <- call "POST" "/api/assets" [("Content-Type", ctype)] (Just bytes) 600
+                            pure $ case r of
+                                Left why -> Left why
+                                Right res
+                                    | status res /= 201 -> Left ("the server refused the file: " <> Text.take 120 (Text.decodeUtf8Lenient (LBS.toStrict (Http.responseBody res))))
+                                    | otherwise -> case Aeson.decode (Http.responseBody res) of
+                                        Just (Aeson.Object o) | Just (Aeson.String i) <- KeyMap.lookup "id" o -> unparse <$> parse @AssetId i
+                                        _ -> Left "the server did not name the file"
             }

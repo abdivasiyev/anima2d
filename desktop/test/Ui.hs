@@ -13,9 +13,10 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import GHC.Clock (getMonotonicTime)
-import System.Directory (createDirectoryIfMissing, getTemporaryDirectory, removeDirectoryRecursive)
+import System.Directory (createDirectoryIfMissing, findExecutable, getTemporaryDirectory, removeDirectoryRecursive)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
+import System.Process (readProcessWithExitCode)
 
 import Data.Text qualified as Text
 import GI.Cairo.Render qualified as C
@@ -97,6 +98,17 @@ kinds p = case p.edited of
             FillV _ -> "fill"
             TextV _ -> "text"
             ImageV _ -> "image"
+
+refCount :: Probe -> Int
+refCount p = maybe 0 (\pr -> length (viewProject pr).board) p.edited
+
+follows :: Probe -> [Bool]
+follows p = maybe [] (\pr -> map (.follows) (viewProject pr).board) p.edited
+
+bottomIsReference :: Probe -> Bool
+bottomIsReference p = case viewProject <$> p.edited of
+    Just v | LayerView {kind = ReferenceView _ _} : _ <- v.stack -> True
+    _ -> False
 
 shapeCentre :: Probe -> Maybe (Double, Double)
 shapeCentre p = case p.edited of
@@ -211,6 +223,43 @@ main = do
     let
         layers = maybe 0 (\pr -> length (viewProject pr).stack) s12.edited
     check "+ Layer adds a layer and edits it" (layers == 2 && s12.onLayer == 1) (show (layers, s12.onLayer))
+    -- The reference board: a picture, traced onto the canvas; a video that follows.
+    let
+        picture = dir </> "reference.png"
+    sample <- C.createImageSurface C.FormatARGB32 320 180
+    C.renderWith sample $ do
+        C.setSourceRGB 0.95 0.62 0.36
+        C.paint
+        C.setSourceRGB 0.28 0.36 0.62
+        C.rectangle 0 120 320 60
+        C.fill
+    C.surfaceWriteToPNG sample picture
+    w.addReferenceFile picture
+    r1 <- waitFor w 5000 (\p -> p.boardShows)
+    check "a picture goes on the board and shows" (refCount r1 == 1 && r1.boardShows) (show (refCount r1, r1.boardShows, r1.note))
+    snapshot whole (shots </> "05-board.png")
+    layersBefore <- maybe 0 (\pr -> length (viewProject pr).stack) . (.edited) <$> state
+    w.click "Trace" >> pump 200
+    r2 <- state
+    check "Trace puts it under the drawings" (maybe 0 (\pr -> length (viewProject pr).stack) r2.edited == layersBefore + 1 && bottomIsReference r2) (show (maybe 0 (\pr -> length (viewProject pr).stack) r2.edited))
+    snapshot w.canvasArea (shots </> "06-traced.png")
+    ffmpeg <- findExecutable "ffmpeg"
+    case ffmpeg of
+        Nothing -> putStrLn "skip a video on the board: no ffmpeg on the PATH"
+        Just exe -> do
+            let
+                video = dir </> "reference.mp4"
+            _ <- readProcessWithExitCode exe ["-loglevel", "error", "-y", "-loop", "1", "-i", picture, "-t", "2", "-r", "24", "-pix_fmt", "yuv420p", video] ""
+            w.addReferenceFile video
+            r3 <- waitFor w 8000 (\p -> refCount p == 2 && p.boardShows)
+            check "a video goes on the board and shows its still" (refCount r3 == 2 && r3.boardShows) (show (refCount r3, r3.boardShows, r3.note))
+            w.click "Follow" >> pump 100
+            r4 <- state
+            check "Follow switches it to play on its own" (follows r4 == [True, False]) (show (follows r4))
+            snapshot whole (shots </> "07-video.png")
+    w.click "Remove reference" >> pump 100
+    r5 <- state
+    check "Remove takes it off the board" (refCount r5 == (if isJust ffmpeg then 1 else 0)) (show (refCount r5))
     -- Saving: a moment after the last edit, the folder has what the window has.
     s13 <- waitFor w 6000 (\p -> not p.unsaved && p.note == "Saved")
     check "it saves" (not s13.unsaved && s13.note == "Saved") (Text.unpack s13.note)

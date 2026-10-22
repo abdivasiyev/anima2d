@@ -38,6 +38,7 @@ library
                     , Anima.Desktop.Geometry
                     , Anima.Desktop.Icons
                     , Anima.Desktop.Style
+                    , Anima.Desktop.Video
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d
@@ -55,6 +56,7 @@ library
                     , http-client
                     , http-client-tls
                     , http-types
+                    , process
                     , vector
                     , gi-cairo-render
                     , gi-pango
@@ -102,4 +104,5 @@ test-suite ui
                     , gi-cairo-connector
                     , gi-cairo-render
                     , gi-gtk3
+                    , process
                     , text

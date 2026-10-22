@@ -122,7 +122,7 @@
           name = "anima2d-desktop-shell";
           packages = _: [backend desktop];
           withHoogle = false;
-          nativeBuildInputs = [hpkgs.cabal-install hpkgs.fourmolu hpkgs.hlint pkgs.pkg-config];
+          nativeBuildInputs = [hpkgs.cabal-install hpkgs.fourmolu hpkgs.hlint pkgs.pkg-config pkgs.ffmpeg];
           # GTK's theme draws some marks from SVG; without the loader they go missing.
           GDK_PIXBUF_MODULE_FILE = "${pkgs.librsvg}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache";
         };

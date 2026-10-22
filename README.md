@@ -59,6 +59,9 @@ two.
 **Animating**
 - Layers, bottom to top: drawing layers, background layers (drawn once, held to the end),
   and reference images or videos to trace over.
+- A reference board (W): pictures and videos kept beside the canvas while you draw, saved
+  with the project. Zoom and pan each one, let a video follow the playhead or play on its
+  own, take a colour from it, or trace it as a layer.
 - A timeline with a row per layer; each drawing is as wide as it is held. Marks for keys,
   breakdowns and inbetweens. Scrub the ruler (audio follows, for lip sync); loop a range,
   play ping-pong or slowed down.
@@ -114,10 +117,14 @@ any headers your sign-in gate needs). It shares the project format and the parse
 the server, so projects move freely between the browser, the iPad and the desktop. Its
 renderer is drawn with Cairo and matches the browser's.
 
-So far it opens and plays projects: the canvas (zoom with the wheel, drag to pan), the
-timeline (click to move the playhead and choose a layer), onion skin and playback, and
-it updates live when another device or an agent saves. Drawing tools and the chat
-sidebar come next.
+It draws with the browser's brushes (pen, pencil, marker, paint), scatter brushes, the
+eraser, shapes, text and the paint bucket; selects, moves, scales and turns items; adds,
+duplicates and holds drawings and layers, with undo and onion skin; and it updates live
+when another device or an agent saves. The sidebar holds the reference board (videos
+need ffmpeg on the PATH); the assistant chat comes next.
+
+`just desktop-ui` drives the real window offscreen (drawing, undo, selection, the board,
+saving) and writes snapshots of it to `desktop/ui-snapshots/`.
 
 `anima2d-desktop render <project.anima2d.json> <frame> <width> <out.png>` draws one frame
 without opening a window.
