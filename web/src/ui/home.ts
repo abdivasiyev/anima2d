@@ -1,9 +1,11 @@
 /** The project list, and the dialog that starts a new project. */
 import { deleteProject, waitForChanges } from "../api";
 import { deleteLocal } from "../local";
-import { createProject, listAll } from "../sync";
+import { createProject, listAll, openProject } from "../sync";
+import { andThen, err, type Result } from "../domain/result";
+import { decodeJson } from "../domain/wire";
 import { CANVAS_PRESETS, newProject } from "../domain/edit";
-import { FPS_VALUES, parseFps, parseProjectId, parseProjectName, type ProjectSummary } from "../domain/project";
+import { FPS_VALUES, makeProject, parseFps, parseProject, parseProjectId, parseProjectName, unparseProject, type Project, type ProjectSummary } from "../domain/project";
 import { h } from "./dom";
 import { icon, mark } from "./icons";
 import { openMenu, type MenuItem } from "./menu";
@@ -41,6 +43,30 @@ const confirmDialog = (heading: string, body: string, action: string): Promise<b
     dialog.showModal();
   });
 
+/** The project as a .anima2d.json file, to keep, share, or import on another server. */
+const download = async (s: ProjectSummary): Promise<void> => {
+  const opened = await openProject(s.id);
+  if (!opened.ok) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(unparseProject(opened.value.project), null, 1)], { type: "application/json" }));
+  const a = h("a", { href: url, download: `${s.name.replace(/[\\/:*?"<>|]+/g, " ").trim() || "project"}.anima2d.json` });
+  a.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 30000);
+};
+
+/**
+ * A project file, read and parsed like anything else from outside; it becomes a new
+ * project (a fresh id), so importing never replaces one already here.
+ */
+const importFile = async (file: File): Promise<Result<Project>> => {
+  const text = await file.text().catch(() => undefined);
+  if (text === undefined) return err("the file could not be read");
+  const id = parseProjectId(crypto.randomUUID());
+  if (!id.ok) return id;
+  return andThen(andThen(decodeJson(text), parseProject), (p) => makeProject(id.value, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts));
+};
+
 const card = (s: ProjectSummary, open: (s: ProjectSummary) => void, remove: (s: ProjectSummary) => void): HTMLElement => {
   const b = h(
     "button",
@@ -51,6 +77,7 @@ const card = (s: ProjectSummary, open: (s: ProjectSummary) => void, remove: (s: 
   );
   const items = (): MenuItem[] => [
     { label: "Open", action: () => { open(s); } },
+    { label: "Download project file", action: () => { void download(s); } },
     "separator",
     { label: "Delete…", danger: true, action: () => { remove(s); } },
   ];
@@ -145,6 +172,25 @@ export const homeScreen = (go: (hash: string) => void, signal: AbortSignal): HTM
     go(`#/p/${id}`);
   });
   const newButton = h("button", { type: "button", class: "btn primary" }, icon("add"), "New project");
+  const picker = h("input", { type: "file", accept: ".json,application/json", hidden: true });
+  const importButton = h("button", { type: "button", class: "btn" }, "Import…");
+  importButton.title = "Open a .anima2d.json project file (an example, or one downloaded elsewhere)";
+  importButton.addEventListener("click", () => {
+    picker.value = "";
+    picker.click();
+  });
+  picker.addEventListener("change", () => {
+    const file = picker.files?.[0];
+    if (file === undefined) return;
+    void importFile(file).then(async (r) => {
+      if (!r.ok) {
+        list.prepend(h("div", { class: "notice" }, `That file is not an anima2D project: ${r.error}.`));
+        return;
+      }
+      await createProject(r.value);
+      go(`#/p/${r.value.id}`);
+    });
+  });
   newButton.addEventListener("click", () => {
     dialog.showModal();
     dialog.querySelector("input")?.select();
@@ -153,7 +199,7 @@ export const homeScreen = (go: (hash: string) => void, signal: AbortSignal): HTM
   const root = h(
     "div",
     { class: "home" },
-    h("header", { class: "home-header" }, h("div", { class: "wordmark" }, mark(), "anima2D"), newButton),
+    h("header", { class: "home-header" }, h("div", { class: "wordmark" }, mark(), "anima2D"), h("div", { class: "home-actions" }, importButton, newButton, picker)),
     h("h2", {}, "Projects"),
     list,
     dialog,

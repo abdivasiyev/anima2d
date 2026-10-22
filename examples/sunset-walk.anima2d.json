@@ -1,0 +1,1971 @@
+{
+ "format": 3,
+ "id": "example-sunset",
+ "name": "Sunset walk (parallax and light)",
+ "canvas": {
+  "width": 1280,
+  "height": 720
+ },
+ "fps": 24,
+ "layers": [
+  {
+   "kind": "drawing",
+   "id": "sky",
+   "name": "Sky",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "depth": 12,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#f6a86b",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          -200,
+          -200
+         ],
+         [
+          1480,
+          -200
+         ],
+         [
+          1480,
+          260
+         ],
+         [
+          -200,
+          260
+         ]
+        ]
+       ]
+      },
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#f7c48e",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          -200,
+          260
+         ],
+         [
+          1480,
+          260
+         ],
+         [
+          1480,
+          420
+         ],
+         [
+          -200,
+          420
+         ]
+        ]
+       ]
+      },
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#fbe2b6",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          -200,
+          420
+         ],
+         [
+          1480,
+          420
+         ],
+         [
+          1480,
+          900
+         ],
+         [
+          -200,
+          900
+         ]
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "light",
+   "id": "sun",
+   "name": "Sun",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "blend": "add",
+   "depth": 12,
+   "light": {
+    "shape": "radial",
+    "color": "#fff1c4",
+    "intensity": 0.85,
+    "center": [
+     900,
+     330
+    ],
+    "radius": 380,
+    "angle": 0,
+    "softness": 0.8
+   }
+  },
+  {
+   "kind": "drawing",
+   "id": "mountains",
+   "name": "Mountains",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "depth": 6,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#b07a8c",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          -300,
+          770
+         ],
+         [
+          -300,
+          414.6094778703973
+         ],
+         [
+          -260,
+          405.7773060303858
+         ],
+         [
+          -220,
+          387.68780729464845
+         ],
+         [
+          -180,
+          361.8373951963774
+         ],
+         [
+          -140,
+          335.24478473041825
+         ],
+         [
+          -100,
+          318.1630254609737
+         ],
+         [
+          -60,
+          317.942761200388
+         ],
+         [
+          -20,
+          333.3140855106626
+         ],
+         [
+          20,
+          353.8170486403261
+         ],
+         [
+          60,
+          365.6631099326588
+         ],
+         [
+          100,
+          360.46263018088314
+         ],
+         [
+          140,
+          340.81205151747645
+         ],
+         [
+          180,
+          318.7431835842965
+         ],
+         [
+          220,
+          308.0828920247592
+         ],
+         [
+          260,
+          316.0471780256274
+         ],
+         [
+          300,
+          339.6875268108235
+         ],
+         [
+          340,
+          369.019020866928
+         ],
+         [
+          380,
+          393.8238070216124
+         ],
+         [
+          420,
+          408.94716492831236
+         ],
+         [
+          460,
+          414.8285274793686
+         ],
+         [
+          500,
+          414.1710516386602
+         ],
+         [
+          540,
+          408.52931797995257
+         ],
+         [
+          580,
+          397.9453602216617
+         ],
+         [
+          620,
+          383.42011840518535
+         ],
+         [
+          660,
+          369.0660906402273
+         ],
+         [
+          700,
+          360.91677629499554
+         ],
+         [
+          740,
+          362.5130519261419
+         ],
+         [
+          780,
+          370.7895399065547
+         ],
+         [
+          820,
+          376.3274932488331
+         ],
+         [
+          860,
+          368.9432336677826
+         ],
+         [
+          900,
+          345.17997079236966
+         ],
+         [
+          940,
+          312.1872009006703
+         ],
+         [
+          980,
+          284.63227971638344
+         ],
+         [
+          1020,
+          276.25221702359215
+         ],
+         [
+          1060,
+          291.6580560898822
+         ],
+         [
+          1100,
+          323.927900721505
+         ],
+         [
+          1140,
+          359.3830362654711
+         ],
+         [
+          1180,
+          385.89320003245825
+         ],
+         [
+          1220,
+          398.9073872760541
+         ],
+         [
+          1260,
+          401.6204940761055
+         ],
+         [
+          1300,
+          400.3076396083717
+         ],
+         [
+          1340,
+          399.17459076047743
+         ],
+         [
+          1380,
+          398.63177966740767
+         ],
+         [
+          1420,
+          397.4113737696007
+         ],
+         [
+          1460,
+          395.5563694064571
+         ],
+         [
+          1500,
+          394.89561519278016
+         ],
+         [
+          1540,
+          396.38633274915776
+         ],
+         [
+          1580,
+          397.07881095775446
+         ],
+         [
+          1580,
+          770
+         ]
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "hills",
+   "name": "Hills",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "depth": 3,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#7f5f7a",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          -300,
+          770
+         ],
+         [
+          -300,
+          484.53913696218666
+         ],
+         [
+          -270,
+          483.4065443228056
+         ],
+         [
+          -240,
+          477.8481408041098
+         ],
+         [
+          -210,
+          470.617562379493
+         ],
+         [
+          -180,
+          464.92406373825514
+         ],
+         [
+          -150,
+          463.2505322968794
+         ],
+         [
+          -120,
+          466.55031257432483
+         ],
+         [
+          -90,
+          474.10262602881494
+         ],
+         [
+          -60,
+          484.00836225571584
+         ],
+         [
+          -30,
+          494.03987307190226
+         ],
+         [
+          0,
+          502.4392837119989
+         ],
+         [
+          30,
+          508.3347762680117
+         ],
+         [
+          60,
+          511.66549690960113
+         ],
+         [
+          90,
+          512.758250702643
+         ],
+         [
+          120,
+          511.85803521289836
+         ],
+         [
+          150,
+          508.9055225391088
+         ],
+         [
+          180,
+          503.6894226228783
+         ],
+         [
+          210,
+          496.27035857889643
+         ],
+         [
+          240,
+          487.3983541673466
+         ],
+         [
+          270,
+          478.62227405519627
+         ],
+         [
+          300,
+          471.9342215427245
+         ],
+         [
+          330,
+          469.0363579326877
+         ],
+         [
+          360,
+          470.53964213030645
+         ],
+         [
+          390,
+          475.48749395388563
+         ],
+         [
+          420,
+          481.4902495070537
+         ],
+         [
+          450,
+          485.4981965590671
+         ],
+         [
+          480,
+          484.9472119652258
+         ],
+         [
+          510,
+          478.8192203641632
+         ],
+         [
+          540,
+          468.16474696989945
+         ],
+         [
+          570,
+          455.8427627309663
+         ],
+         [
+          600,
+          445.55608589314113
+         ],
+         [
+          630,
+          440.5565154007422
+         ],
+         [
+          660,
+          442.53092632780124
+         ],
+         [
+          690,
+          451.0973004184911
+         ],
+         [
+          720,
+          464.07658772268104
+         ],
+         [
+          750,
+          478.3816234469021
+         ],
+         [
+          780,
+          491.12255264324517
+         ],
+         [
+          810,
+          500.4725516709051
+         ],
+         [
+          840,
+          505.98357351332027
+         ],
+         [
+          870,
+          508.31237815224574
+         ],
+         [
+          900,
+          508.58125443785934
+         ],
+         [
+          930,
+          507.73363902841345
+         ],
+         [
+          960,
+          506.19663762948295
+         ],
+         [
+          990,
+          503.965309289281
+         ],
+         [
+          1020,
+          500.98363737361484
+         ],
+         [
+          1050,
+          497.53805296430056
+         ],
+         [
+          1080,
+          494.38113815558506
+         ],
+         [
+          1110,
+          492.4627894181101
+         ],
+         [
+          1140,
+          492.3797748881422
+         ],
+         [
+          1170,
+          493.8393424725843
+         ],
+         [
+          1200,
+          495.4678121810555
+         ],
+         [
+          1230,
+          495.1537883704675
+         ],
+         [
+          1260,
+          490.8594385810276
+         ],
+         [
+          1290,
+          481.5846148938459
+         ],
+         [
+          1320,
+          468.0520802052008
+         ],
+         [
+          1350,
+          452.7636664290966
+         ],
+         [
+          1380,
+          439.33010237590213
+         ],
+         [
+          1410,
+          431.2919970387384
+         ],
+         [
+          1440,
+          430.88341691005803
+         ],
+         [
+          1470,
+          438.233227948608
+         ],
+         [
+          1500,
+          451.32839796856274
+         ],
+         [
+          1530,
+          466.7507670173729
+         ],
+         [
+          1560,
+          480.88201837554675
+         ],
+         [
+          1580,
+          770
+         ]
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "traveller",
+   "name": "Traveller",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "effects": {
+    "shadow": {
+     "color": "#2a2140",
+     "opacity": 0.35,
+     "offset": [
+      -26,
+      14
+     ],
+     "blur": 10
+    },
+    "rim": {
+     "color": "#fff0c0",
+     "opacity": 0.9,
+     "width": 5,
+     "angle": -0.35
+    }
+   },
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 2,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         520,
+         560,
+         0.7
+        ],
+        [
+         520,
+         625,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         520,
+         560,
+         0.7
+        ],
+        [
+         520,
+         625,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        520,
+        520
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        524,
+        448
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         530,
+         510,
+         0.7
+        ],
+        [
+         550,
+         560,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         529,
+         556,
+         0.7
+        ],
+        [
+         518,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         529,
+         556,
+         0.7
+        ],
+        [
+         540,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        529,
+        516
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        533,
+        444
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         539,
+         506,
+         0.7
+        ],
+        [
+         565.6,
+         556,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         538,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         518.9474411167423,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         538,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         557.0525588832577,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        538,
+        513.0717967697245
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        542,
+        441.07179676972453
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         548,
+         503.07179676972453,
+         0.7
+        ],
+        [
+         579.4315353299546,
+         553.0717967697245,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         547,
+         552,
+         0.7
+        ],
+        [
+         525,
+         617,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         547,
+         552,
+         0.7
+        ],
+        [
+         569,
+         617,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        547,
+        512
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        551,
+        440
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         557,
+         502,
+         0.7
+        ],
+        [
+         590.2,
+         552,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         556,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         536.9474411167423,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         556,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         575.0525588832577,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        556,
+        513.0717967697245
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        560,
+        441.07179676972453
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         566,
+         503.07179676972453,
+         0.7
+        ],
+        [
+         597.4315353299546,
+         553.0717967697245,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         565,
+         556,
+         0.7
+        ],
+        [
+         554,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         565,
+         556,
+         0.7
+        ],
+        [
+         576,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        565,
+        516
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        569,
+        444
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         575,
+         506,
+         0.7
+        ],
+        [
+         601.6,
+         556,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         574,
+         560,
+         0.7
+        ],
+        [
+         574,
+         625,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         574,
+         560,
+         0.7
+        ],
+        [
+         574,
+         625,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        574,
+        520
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        578,
+        448
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         584,
+         510,
+         0.7
+        ],
+        [
+         604,
+         560,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         583,
+         556,
+         0.7
+        ],
+        [
+         594,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         583,
+         556,
+         0.7
+        ],
+        [
+         572,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        583,
+        516
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        587,
+        444
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         593,
+         506,
+         0.7
+        ],
+        [
+         606.4,
+         556,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         592,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         611.0525588832577,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         592,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         572.9474411167423,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        592,
+        513.0717967697245
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        596,
+        441.07179676972453
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         602,
+         503.07179676972453,
+         0.7
+        ],
+        [
+         610.5684646700454,
+         553.0717967697245,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         601,
+         552,
+         0.7
+        ],
+        [
+         623,
+         617,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         601,
+         552,
+         0.7
+        ],
+        [
+         579,
+         617,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        601,
+        512
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        605,
+        440
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         611,
+         502,
+         0.7
+        ],
+        [
+         617.8,
+         552,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         610,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         629.0525588832577,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         610,
+         553.0717967697245,
+         0.7
+        ],
+        [
+         590.9474411167423,
+         618.0717967697245,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        610,
+        513.0717967697245
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        614,
+        441.07179676972453
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         620,
+         503.07179676972453,
+         0.7
+        ],
+        [
+         628.5684646700454,
+         553.0717967697245,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 2,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         619,
+         556,
+         0.7
+        ],
+        [
+         630,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 12,
+       "opacity": 1,
+       "points": [
+        [
+         619,
+         556,
+         0.7
+        ],
+        [
+         608,
+         621,
+         0.7
+        ]
+       ]
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#3d6fb0",
+       "center": [
+        619,
+        516
+       ],
+       "width": 70,
+       "height": 100,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#2a2140",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#f2c6a0",
+       "center": [
+        623,
+        444
+       ],
+       "width": 52,
+       "height": 52,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#2a2140",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         629,
+         506,
+         0.7
+        ],
+        [
+         642.4,
+         556,
+         0.7
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "ground",
+   "name": "Ground",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#4d3b55",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          -300,
+          625
+         ],
+         [
+          1580,
+          610
+         ],
+         [
+          1580,
+          800
+         ],
+         [
+          -300,
+          800
+         ]
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "grass",
+   "name": "Grass",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "depth": 0.5,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "scatter",
+       "layer": "line",
+       "brush": "grass",
+       "color": "#2c2133",
+       "size": 30,
+       "opacity": 1,
+       "seed": 7,
+       "points": [
+        [
+         -200,
+         716,
+         0.6
+        ],
+        [
+         400,
+         712,
+         0.7
+        ],
+        [
+         900,
+         718,
+         0.6
+        ],
+        [
+         1500,
+         714,
+         0.7
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "camera": [
+  {
+   "frame": 0,
+   "center": [
+    560,
+    380
+   ],
+   "zoom": 1,
+   "rotation": 0,
+   "ease": "inOut",
+   "aperture": 1.5,
+   "tint": "#ff9a5c",
+   "tintAmount": 0.05
+  },
+  {
+   "frame": 23,
+   "center": [
+    700,
+    400
+   ],
+   "zoom": 1.2,
+   "rotation": 0,
+   "ease": "linear",
+   "aperture": 1.5,
+   "tint": "#d9673f",
+   "tintAmount": 0.3
+  }
+ ],
+ "audio": []
+}

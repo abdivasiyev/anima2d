@@ -1,0 +1,552 @@
+{
+ "format": 3,
+ "id": "example-bouncing-ball",
+ "name": "Bouncing ball",
+ "canvas": {
+  "width": 1280,
+  "height": 720
+ },
+ "fps": 24,
+ "layers": [
+  {
+   "kind": "drawing",
+   "id": "floor",
+   "name": "Floor",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#f4efe6",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          0,
+          600
+         ],
+         [
+          1280,
+          600
+         ],
+         [
+          1280,
+          720
+         ],
+         [
+          0,
+          720
+         ]
+        ]
+       ]
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#1c1c1e",
+       "size": 4,
+       "opacity": 1,
+       "points": [
+        [
+         0,
+         600,
+         0.7
+        ],
+        [
+         1280,
+         600,
+         0.7
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "ball",
+   "name": "Ball",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "holdLast": false,
+   "cels": [
+    {
+     "hold": 3,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        240,
+        606
+       ],
+       "width": 52.5,
+       "height": 7.699999999999999,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        240,
+        170
+       ],
+       "width": 140,
+       "height": 140,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         208.5,
+         145.5,
+         0.7
+        ],
+        [
+         233,
+         126.6,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        350,
+        606
+       ],
+       "width": 52.5,
+       "height": 7.699999999999999,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        350,
+        224.39999999999998
+       ],
+       "width": 131.6,
+       "height": 151.20000000000002,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         320.39,
+         197.93999999999997,
+         0.7
+        ],
+        [
+         343.42,
+         177.52799999999996,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        460,
+        606
+       ],
+       "width": 90,
+       "height": 13.2,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        460,
+        338.79999999999995
+       ],
+       "width": 123.2,
+       "height": 162.39999999999998,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         432.28,
+         310.37999999999994,
+         0.7
+        ],
+        [
+         453.84,
+         288.45599999999996,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "breakdown",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        570,
+        606
+       ],
+       "width": 136.66666666666666,
+       "height": 20.044444444444444,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        570,
+        473.20000000000005
+       ],
+       "width": 117.6,
+       "height": 173.6,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         543.54,
+         442.82000000000005,
+         0.7
+        ],
+        [
+         564.12,
+         419.38400000000007,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        680,
+        606
+       ],
+       "width": 150,
+       "height": 22,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        680,
+        552.4
+       ],
+       "width": 189,
+       "height": 95.2,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         637.475,
+         535.74,
+         0.7
+        ],
+        [
+         670.55,
+         522.8879999999999,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "breakdown",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        790,
+        606
+       ],
+       "width": 136.66666666666666,
+       "height": 20.044444444444444,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        790,
+        473.20000000000005
+       ],
+       "width": 117.6,
+       "height": 173.6,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         763.54,
+         442.82000000000005,
+         0.7
+        ],
+        [
+         784.12,
+         419.38400000000007,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        900,
+        606
+       ],
+       "width": 90,
+       "height": 13.2,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        900,
+        338.79999999999995
+       ],
+       "width": 123.2,
+       "height": 162.39999999999998,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         872.28,
+         310.37999999999994,
+         0.7
+        ],
+        [
+         893.84,
+         288.45599999999996,
+         0.7
+        ]
+       ]
+      }
+     ]
+    },
+    {
+     "hold": 3,
+     "mark": "inbetween",
+     "items": [
+      {
+       "kind": "shape",
+       "layer": "color",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 0.18,
+       "fill": "#1c1c1e",
+       "center": [
+        1010,
+        606
+       ],
+       "width": 52.5,
+       "height": 7.699999999999999,
+       "rotation": 0
+      },
+      {
+       "kind": "shape",
+       "layer": "line",
+       "shape": "ellipse",
+       "color": "#1c1c1e",
+       "size": 5,
+       "opacity": 1,
+       "fill": "#e5484d",
+       "center": [
+        1010,
+        224.39999999999998
+       ],
+       "width": 131.6,
+       "height": 151.20000000000002,
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "pen",
+       "color": "#ffffff",
+       "size": 8,
+       "opacity": 0.7,
+       "points": [
+        [
+         980.39,
+         197.93999999999997,
+         0.7
+        ],
+        [
+         1003.42,
+         177.52799999999996,
+         0.7
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "camera": [],
+ "audio": []
+}

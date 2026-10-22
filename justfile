@@ -36,3 +36,7 @@ check:
 # Build and (re)install the Mac's render agent as a LaunchAgent.
 render:
     cd render && npm install && npm run build && ./install.sh
+
+# The example projects and their preview GIFs, drawn by the editor's own renderer on Skia.
+examples:
+    cd render && npm install && npx esbuild ../examples/build.ts --bundle --platform=node --format=esm --target=node20 --external:@napi-rs/canvas --outfile=dist/examples.mjs --log-level=warning && node dist/examples.mjs ../examples

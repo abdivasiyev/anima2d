@@ -1741,3 +1741,8 @@ a.btn {
 dialog.confirm {
   max-width: 380px;
 }
+
+.home-actions {
+  display: flex;
+  gap: 8px;
+}

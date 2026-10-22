@@ -1,0 +1,696 @@
+{
+ "format": 3,
+ "id": "example-title-card",
+ "name": "Title card (keyframes and text)",
+ "canvas": {
+  "width": 1280,
+  "height": 720
+ },
+ "fps": 24,
+ "layers": [
+  {
+   "kind": "drawing",
+   "id": "paper",
+   "name": "Paper",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "fill",
+       "layer": "color",
+       "color": "#f7f5f0",
+       "opacity": 1,
+       "polygons": [
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1280,
+          0
+         ],
+         [
+          1280,
+          720
+         ],
+         [
+          0,
+          720
+         ]
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "title",
+   "name": "Title",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "motion": {
+    "pivot": [
+     640,
+     360
+    ],
+    "keys": [
+     {
+      "frame": 0,
+      "position": [
+       0,
+       40
+      ],
+      "scale": 0.6,
+      "rotation": -0.12,
+      "opacity": 0,
+      "ease": "out"
+     },
+     {
+      "frame": 14,
+      "position": [
+       0,
+       0
+      ],
+      "scale": 1.04,
+      "rotation": 0.02,
+      "opacity": 1,
+      "ease": "inOut"
+     },
+     {
+      "frame": 20,
+      "position": [
+       0,
+       0
+      ],
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "ease": "linear"
+     }
+    ]
+   },
+   "effects": {
+    "shadow": {
+     "color": "#1c1c1e",
+     "opacity": 0.18,
+     "offset": [
+      8,
+      12
+     ],
+     "blur": 10
+    }
+   },
+   "holdLast": true,
+   "cels": [
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "anima2D",
+       "font": "sans-serif",
+       "style": "bold",
+       "size": 160,
+       "align": "center",
+       "color": "#2f6bff",
+       "opacity": 1,
+       "center": [
+        640,
+        330
+       ],
+       "rotation": 0
+      },
+      {
+       "kind": "stroke",
+       "layer": "line",
+       "brush": "marker",
+       "color": "#2f6bff",
+       "size": 10,
+       "opacity": 1,
+       "points": [
+        [
+         420,
+         430,
+         0.7
+        ],
+        [
+         640,
+         445,
+         0.7
+        ],
+        [
+         860,
+         430,
+         0.7
+        ]
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "drawing",
+   "id": "subtitle",
+   "name": "Subtitle",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "holdLast": false,
+   "cels": [
+    {
+     "hold": 18,
+     "mark": "none",
+     "items": []
+    },
+    {
+     "hold": 1,
+     "mark": "key",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "D",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Dr",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Dra",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw i",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it.",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. T",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Ti",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Tim",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time i",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it.",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. S",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. Sh",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. Shi",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. Ship",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. Ship i",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 1,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. Ship it",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    },
+    {
+     "hold": 24,
+     "mark": "none",
+     "items": [
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Draw it. Time it. Ship it.",
+       "font": "sans-serif",
+       "style": "normal",
+       "size": 44,
+       "align": "center",
+       "color": "#3a3a44",
+       "opacity": 1,
+       "center": [
+        640,
+        470
+       ],
+       "rotation": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "kind": "light",
+   "id": "sweep",
+   "name": "Light sweep",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "blend": "screen",
+   "motion": {
+    "pivot": [
+     640,
+     360
+    ],
+    "keys": [
+     {
+      "frame": 10,
+      "position": [
+       -900,
+       0
+      ],
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "ease": "inOut"
+     },
+     {
+      "frame": 40,
+      "position": [
+       900,
+       0
+      ],
+      "scale": 1,
+      "rotation": 0,
+      "opacity": 1,
+      "ease": "linear"
+     }
+    ]
+   },
+   "light": {
+    "shape": "linear",
+    "color": "#ffffff",
+    "intensity": 0.6,
+    "center": [
+     640,
+     360
+    ],
+    "radius": 140,
+    "angle": 0.35,
+    "softness": 0.9
+   }
+  }
+ ],
+ "camera": [],
+ "audio": []
+}

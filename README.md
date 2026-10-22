@@ -5,6 +5,35 @@ Draw frame by frame with onion skin and a timeline, colour under your linework, 
 rig what you would rather not redraw, and export for YouTube and Shorts. Everything lives
 on your own server; the editor keeps working when that server is off.
 
+## See it
+
+Three example projects, rendered by the app's own renderer (the GIFs are the files in
+[`examples/`](examples), drawn the way an export draws them):
+
+| | | |
+|---|---|---|
+| ![Bouncing ball](examples/media/bouncing-ball.gif) | ![Sunset walk](examples/media/sunset-walk.gif) | ![Title card](examples/media/title-card.gif) |
+| **Bouncing ball.** Frame by frame on twos: squash and stretch, key, breakdown and inbetween marks, a shadow on the colour plane under the line. | **Sunset walk.** Layers at five depths for parallax, a sun light layer, a walk cycle with a drop shadow and rim light, a camera push-in with depth of field and a dusk tint. | **Title card.** Text animated with layer keyframes (scale, turn, fade), a subtitle typed on with Typewriter, a light sweeping across. |
+
+To open one: on the project list choose **Import…** and pick its `.anima2d.json` file.
+
+## How it works
+
+1. **Draw.** Pick a brush on the toolbar and draw with the Pencil; fingers pan, zoom and
+   turn the canvas, and never draw. Each drawing sits on the timeline, as wide as it is
+   held.
+2. **Time it.** Add drawings, set how long each holds, mark keys and breakdowns, and flip
+   through with the onion skin showing the drawings around this one. Let Inbetween draw
+   the in-betweens, or move a part along a path.
+3. **Stage it.** Layers for background, characters and foreground; give them depth, light
+   them, move whole layers with keyframes, and frame the shot with camera keys.
+4. **Export it.** A YouTube or Shorts preset, on the device (MP4, PNG frames, GIF) or on
+   the Mac (H.264, HEVC, ProRes with transparency).
+
+Every edit is saved on the device at once and on your server a moment later; another
+device, or an agent drawing through MCP, shows up in an open project within a second or
+two.
+
 ## What it does
 
 **Drawing**
@@ -58,6 +87,8 @@ on your own server; the editor keeps working when that server is off.
   poses turns the bones in arcs.
 
 **Saving and exporting**
+- Project files: download any project from its menu on the list (`.anima2d.json`) and import
+  it on another server, or start from an example.
 - Every edit is saved on the device at once and on the server shortly after. With the
   server unreachable the app still opens (a service worker caches it) and edits sync when
   it is back. Saves are revisioned: two devices, or the editor and an agent, never
@@ -77,6 +108,7 @@ on your own server; the editor keeps working when that server is off.
 | `web/` | The editor, in TypeScript (Vite, no UI framework) |
 | `render/` | The Mac render agent (Node, Skia, ffmpeg VideoToolbox) |
 | `fixtures/` | Parser cases both test suites run: accept, upgrade and reject alike |
+| `examples/` | Example projects to import, their preview GIFs, and the script that builds them (`just examples`) |
 | `docs/conventions.md` | **Parse, don't validate** and the other house rules; read first |
 
 ## Developing
