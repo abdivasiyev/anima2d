@@ -7,7 +7,7 @@
  * ffmpeg's VideoToolbox encoder, and leaves the MP4 in renders/done with its progress in
  * renders/status. One render at a time.
  */
-import { registerFont, skiaImages } from "./canvas";
+import { pngOf, registerFont, skiaImages } from "./canvas";
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { bitrate, keepsAlpha, parsePreset, presetFps, type Preset } from "../../web/src/domain/export";
 import { duration, parseProject, type Project } from "../../web/src/domain/project";
 import { decodeJson, object } from "../../web/src/domain/wire";
-import { andThen } from "../../web/src/domain/result";
+import { andThen, err, ok } from "../../web/src/domain/result";
 import { forgetLayouts, preloadImages, projectImages, setImageLoader } from "../../web/src/editor/media";
 import { CelCache, drawOutput } from "../../web/src/editor/output";
 
@@ -95,15 +95,8 @@ const ffmpegArgs = (job: Job, fps: number, seconds: number, out: string): string
   return args;
 };
 
-const render = async (job: Job): Promise<void> => {
-  const { project: p, preset } = job;
-  const fps = presetFps(preset, p.fps);
-  const seconds = duration(p) / p.fps;
-  const frames = Math.max(1, Math.round(seconds * fps));
-  const ext = preset.codec === "prores" ? "mov" : "mp4";
-  const part = join(DONE, `${job.id}.part.${ext}`);
-  const out = join(DONE, `${job.id}.${ext}`);
-  // The project's fonts and pictures, before the first frame.
+/** The project's fonts and pictures, before its first frame. */
+const prepare = async (p: Project): Promise<void> => {
   for (const f of p.fonts) {
     const key = `${f.family}\n${f.asset}`;
     if (!fonts.has(key) && existsSync(asset(f.asset))) {
@@ -113,6 +106,64 @@ const render = async (job: Job): Promise<void> => {
   }
   forgetLayouts();
   await preloadImages(projectImages(p));
+};
+
+// Stills ---------------------------------------------------------------------------------
+
+/**
+ * A preview for an agent: one frame as a PNG, `width` wide, as it exports. Stills are
+ * <id>.still.json in the queue, taken every quarter second even while a video renders
+ * (its frames await the encoder, so this runs between them); the server waits on
+ * done/<id>.png, or done/<id>.error with why.
+ */
+const still = async (name: string): Promise<void> => {
+  const path = join(QUEUE, name);
+  const id = name.replace(/\.still\.json$/, "");
+  const fail = (why: string): void => {
+    writeFileSync(join(DONE, `${id}.error`), why);
+    log(`preview ${id} failed: ${why}`);
+  };
+  try {
+    const raw = andThen(decodeJson(readFileSync(path, "utf8")), object);
+    unlinkSync(path);
+    if (!raw.ok) return fail(raw.error);
+    const project = parseProject(raw.value.project);
+    const at = andThen(object(raw.value.still), (s) => (typeof s.frame === "number" && typeof s.width === "number" ? ok({ frame: s.frame, width: s.width }) : err("expected a frame and a width")));
+    if (!project.ok) return fail(`project: ${project.error}`);
+    if (!at.ok) return fail(at.error);
+    const p = project.value;
+    const w = Math.max(64, Math.min(1920, Math.round(at.value.width)));
+    const h = Math.max(2, Math.round((w * p.canvas.height) / p.canvas.width));
+    await prepare(p);
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return fail("no 2D context");
+    drawOutput(ctx, p, at.value.frame, new CelCache(p.canvas.width, p.canvas.height, 4), w, h);
+    writeFileSync(join(DONE, `${id}.png.part`), pngOf(canvas));
+    renameSync(join(DONE, `${id}.png.part`), join(DONE, `${id}.png`));
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  }
+};
+
+const stills = async (): Promise<void> => {
+  for (;;) {
+    for (const n of readdirSync(QUEUE).filter((x) => x.endsWith(".still.json"))) await still(n);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+};
+
+// Videos ---------------------------------------------------------------------------------
+
+const render = async (job: Job): Promise<void> => {
+  const { project: p, preset } = job;
+  const fps = presetFps(preset, p.fps);
+  const seconds = duration(p) / p.fps;
+  const frames = Math.max(1, Math.round(seconds * fps));
+  const ext = preset.codec === "prores" ? "mov" : "mp4";
+  const part = join(DONE, `${job.id}.part.${ext}`);
+  const out = join(DONE, `${job.id}.${ext}`);
+  await prepare(p);
   const canvas = new OffscreenCanvas(preset.width, preset.height);
   const ctx = canvas.getContext("2d");
   if (ctx === null) throw new Error("no 2D context");
@@ -149,7 +200,7 @@ const render = async (job: Job): Promise<void> => {
 
 const next = (): string | undefined => {
   const jobs = readdirSync(QUEUE)
-    .filter((n) => n.endsWith(".json"))
+    .filter((n) => n.endsWith(".json") && !n.endsWith(".still.json"))
     .map((n) => ({ n, t: statSync(join(QUEUE, n)).mtimeMs }))
     .sort((a, b) => a.t - b.t);
   return jobs[0]?.n;
@@ -188,7 +239,8 @@ const loop = async (): Promise<void> => {
 };
 
 // Jobs left in working by a stop mid-render go back to the queue.
-for (const n of readdirSync(WORKING).filter((x) => x.endsWith(".json"))) renameSync(join(WORKING, n), join(QUEUE, n));
+for (const n of readdirSync(WORKING).filter((x) => x.endsWith(".json") && !x.endsWith(".still.json"))) renameSync(join(WORKING, n), join(QUEUE, n));
 
 log(`anima2d render agent watching ${QUEUE} (ffmpeg: ${FFMPEG})`);
 void loop();
+void stills();

@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiWayIf #-}
+
 {- | The render queue for the Mac: videos encoded on its GPU, not on this VM.
 
 the server has no GPU, so a render is handed to an agent on the Mac through the
@@ -9,9 +11,10 @@ folder both can see (the projects directory is on the Mac mount): a job is a fil
 Everything here is parsed: the preset by the same rules as the editor's, the agent's
 status files as they are read back.
 -}
-module Anima.Renders (rendersApp) where
+module Anima.Renders (rendersApp, previewFrame) where
 
-import Control.Monad (filterM, forM, (<=<))
+import Control.Concurrent (threadDelay)
+import Control.Monad (filterM, forM, when, (<=<))
 import Data.Aeson (Value (..), object, (.=))
 import Data.List (sortOn)
 import Data.Maybe (catMaybes, fromMaybe)
@@ -19,12 +22,13 @@ import Data.Ord (Down (..))
 import Data.Text (Text)
 import Data.Time (getCurrentTime)
 import Data.Time.Format.ISO8601 (iso8601Show)
-import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory, renameFile)
+import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory, removeFile, renameFile)
 import System.FilePath (takeExtension, (</>))
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
@@ -160,6 +164,48 @@ rendersApp dataDir store newId req respond = do
         json = [("Content-Type", "application/json")]
         jsonError s why = Wai.responseLBS s json (Aeson.encode (object ["error" .= why]))
 
+{- | One frame drawn by the Mac as a PNG, for an agent to look at what it drew. The job
+goes in the same queue (the agent takes stills before videos) and is waited for here;
+nothing is listed among the renders.
+-}
+previewFrame :: FilePath -> IO Text -> Project -> Int -> Int -> IO (Either Text LBS.ByteString)
+previewFrame dataDir newId project frame width = do
+    let
+        root = dataDir </> "renders"
+        queue = root </> "queue"
+        done = root </> "done"
+    mapM_ (createDirectoryIfMissing True) [queue, root </> "working", root </> "status", done]
+    jid <- newId
+    now <- getCurrentTime
+    let
+        name = Text.unpack jid
+        -- Named apart from video jobs, so the agent can take it in the middle of one.
+        job = queue </> name <> ".still.json"
+        png = done </> name <> ".png"
+        failed = done </> name <> ".error"
+    writeWhole job (object ["id" .= jid, "still" .= object ["frame" .= frame, "width" .= width], "project" .= unparse project, "created" .= iso8601Show now])
+    -- Half a second at a time, for up to 40 seconds.
+    let
+        waitFor :: Int -> IO (Either Text LBS.ByteString)
+        waitFor 0 = do
+            queued <- doesFileExist job
+            when queued (removeFile job)
+            pure (Left "The Mac did not draw the preview in time: is it awake, with the render agent running? (A long video render ahead of it also waits.)")
+        waitFor n = do
+            drawn <- doesFileExist png
+            broke <- doesFileExist failed
+            if
+                | drawn -> do
+                    bytes <- BS.readFile png
+                    removeFile png
+                    pure (Right (LBS.fromStrict bytes))
+                | broke -> do
+                    why <- BS.readFile failed
+                    removeFile failed
+                    pure (Left ("The Mac could not draw it: " <> Text.decodeUtf8Lenient why))
+                | otherwise -> threadDelay 500_000 >> waitFor (n - 1)
+    waitFor 80
+
 -- | The job and its first status, each written whole and renamed into place.
 queueJob :: FilePath -> FilePath -> Text -> Project -> Value -> Text -> IO ()
 queueJob queue status jid project preset created = do
@@ -173,7 +219,8 @@ queueJob queue status jid project preset created = do
             _ -> unparse (projectId project)
     writeWhole (status </> name) (object ["id" .= jid, "state" .= ("queued" :: Text), "progress" .= (0 :: Int), "project" .= projectName, "preset" .= presetName, "created" .= created, "message" .= ("Waiting for the Mac" :: Text)])
     writeWhole (queue </> name) (object ["id" .= jid, "preset" .= preset, "project" .= unparse project, "created" .= created])
-    where
-        writeWhole path v = do
-            LBS.writeFile (path <> ".part") (Aeson.encode v)
-            renameFile (path <> ".part") path
+
+writeWhole :: FilePath -> Value -> IO ()
+writeWhole path v = do
+    LBS.writeFile (path <> ".part") (Aeson.encode v)
+    renameFile (path <> ".part") path

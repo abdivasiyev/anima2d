@@ -43,6 +43,7 @@ library
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , aeson
+                    , base64-bytestring
                     , bytestring
                     , containers
                     , directory

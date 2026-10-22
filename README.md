@@ -54,7 +54,9 @@ on your own server; the editor keeps working when that server is off.
 - Every edit is saved on the device at once and on the server shortly after. With the
   server unreachable the app still opens (a service worker caches it) and edits sync when
   it is back. Saves are revisioned: two devices, or the editor and an agent, never
-  overwrite each other; a conflicting version is kept as a copy.
+  overwrite each other; a conflicting version is kept as a copy. Changes from another
+  device or an agent show within a second or two: the editor and the project list wait on
+  the server (long-polling) instead of asking every few seconds.
 - Export presets for YouTube 4K, 2K, 1080p, 720p and Shorts, and presets of your own.
   Export on the device (WebCodecs MP4, PNG frames in a ZIP, or an animated GIF), or render
   on the Mac through the render agent (H.264 and HEVC on VideoToolbox, or ProRes 4444).
@@ -108,6 +110,8 @@ to resize it.
 | `GET` | `/api/projects/:id` | A project; its revision in `X-Revision` |
 | `GET` | `/api/projects/:id/summary` | Its summary (cheap; editors poll it) |
 | `PUT` | `/api/projects/:id` | Save; `X-Base-Revision` names the revision it started from, 409 if stale |
+| `DELETE` | `/api/projects/:id` | Delete (the files move to `trash/` under the projects folder) |
+| `GET` | `/api/changes?after=N` | Long-poll: answers when anything is saved after save N (or after 20 s), with the latest number |
 | `POST` | `/api/assets` | Upload an image, video, audio or font file (streamed, 512 MB at most) |
 | `GET` | `/api/assets/:id` | Download it (range requests work) |
 | `POST` | `/api/renders` | Queue a render for the Mac: `{"project_id", "preset"}` |
@@ -122,7 +126,8 @@ example.com, Caddy asks an OAuth2 proxy first).
 `anima2d serve --mcp-port 9216` adds an MCP server (streamable HTTP, `POST /mcp`) so agents
 can draw: `list_projects`, `get_project`, `create_project`, `add_layer`, `get_drawing`,
 `add_items`, `replace_items`, `add_drawing`, `set_layer` (blend, clipping and motion keys),
-and `item_format`, the reference of the item and motion JSON with examples. Items go through the same parser as the editor's saves, so a mistake
+`preview` (a frame as a PNG the model can see, drawn by the Mac's render agent), `undo` and
+`redo` (over the last 100 saved versions), and `item_format`, the reference of the item and motion JSON with examples. Items go through the same parser as the editor's saves, so a mistake
 comes back as the exact rejection; writes are revisioned, so an open editor shows them.
 On the server it is `https://example.com/anima2d/mcp`, behind a sign-in gate.
 

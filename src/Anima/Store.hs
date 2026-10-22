@@ -17,13 +17,17 @@ where
 
 import Control.Concurrent.MVar (newMVar, withMVar)
 import Control.Exception (IOException, try)
+import Control.Monad (when)
 import Data.Aeson (FromJSON)
 import Data.Either (partitionEithers)
-import Data.List (sortOn)
+import Data.List (sort, sortOn)
 import Data.Text (Text)
-import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory, renameFile)
+import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
+import GHC.Conc (TVar, atomically, newTVarIO, readTVar, readTVarIO, retry, writeTVar)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removeFile, renameDirectory, renameFile)
 import System.FilePath (takeFileName, (</>))
 import System.IO (hClose, openTempFile)
+import System.Timeout (timeout)
 
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as LBS
@@ -61,7 +65,30 @@ data ProjectStore = ProjectStore
     {- ^ Save, if the project is still at the revision this edit started from. 'Nothing'
       saves regardless: a new project, or a caller that means to overwrite.
     -}
+    , remove :: ProjectId -> IO (Either StoreError ())
+    -- ^ Take a project out of the list: its files move to @trash/@, recoverable by hand.
+    , undo :: ProjectId -> IO (Either StoreError (Maybe ProjectSummary))
+    {- ^ Bring back the version before the latest change, as a new revision (so open
+      editors pick it up like any save); 'Nothing' when there is no older version kept.
+    -}
+    , redo :: ProjectId -> IO (Either StoreError (Maybe ProjectSummary))
+    -- ^ Take back the last 'undo'; 'Nothing' when nothing was undone since the last edit.
+    , changes :: Int -> IO Int
+    {- ^ Wait (up to 'changeWait') for a save after the one numbered @after@, and answer
+      the number of the latest. Saves are counted from 0 when the server starts, so a
+      number from before a restart (larger than any now) is answered at once.
+    -}
     }
+
+-- | Versions kept per project for undo, the latest first to go when full.
+historyLimit :: Int
+historyLimit = 100
+
+{- | How long a caller waits for a save before hearing "nothing new": well inside Warp's
+and a proxy's timeouts, so the connection is never cut under it.
+-}
+changeWait :: Int
+changeWait = 20_000_000
 
 {- | Projects as @<id>.json@ with @<id>.summary.json@ beside each, under one directory.
 
@@ -73,11 +100,60 @@ fileStore :: FilePath -> IO ProjectStore
 fileStore dir = do
     createDirectoryIfMissing True dir
     lock <- newMVar ()
+    counter <- newTVarIO (0 :: Int)
     pure
         ProjectStore
             { list = listSummaries
             , load = loadProject
-            , save = \base project -> withMVar lock (const (saveProject base project))
+            , save = \base project -> withMVar lock $ \() -> do
+                r <- saveProject base project
+                -- A new edit: what was undone can no longer be redone.
+                either (const (pure ())) (const (forgetUndo (projectId project))) r
+                counted counter r
+            , remove = \pid -> withMVar lock $ \() -> guarded "delete the project" $ do
+                exists <- doesFileExist (projectFile pid)
+                if not exists
+                    then pure (Left NotFound)
+                    else do
+                        stamp <- formatTime defaultTimeLocale "%Y%m%dT%H%M%S" <$> getCurrentTime
+                        let
+                            bin = dir </> "trash" </> (Text.unpack (unparse pid) <> "-" <> stamp)
+                        createDirectoryIfMissing True bin
+                        renameFile (projectFile pid) (bin </> "project.json")
+                        renameFile (summaryFile pid) (bin </> "summary.json")
+                        hasHistory <- doesDirectoryExist (historyDir pid)
+                        when hasHistory (renameDirectory (historyDir pid) (bin </> "history"))
+                        counted counter (Right ())
+            , undo = \pid -> withMVar lock $ \() -> guarded "undo" $ do
+                st <- readUndo pid
+                now <- fmap (fmap (unparse . summaryRevision . snd)) (loadProject pid)
+                case now of
+                    Left e -> pure (Left e)
+                    Right current -> do
+                        kept <- keptRevisions pid
+                        let
+                            from = maybe current fst st
+                        case [r | r <- kept, r < from] of
+                            [] -> pure (Right Nothing)
+                            older -> do
+                                let
+                                    target = maximum older
+                                r <- restoreVersion pid target
+                                writeUndo pid target (from : maybe [] snd st)
+                                fmap Just <$> counted counter r
+            , redo = \pid -> withMVar lock $ \() -> guarded "redo" $ do
+                st <- readUndo pid
+                case st of
+                    Just (_, target : rest) -> do
+                        r <- restoreVersion pid target
+                        writeUndo pid target rest
+                        fmap Just <$> counted counter r
+                    _ -> pure (Right Nothing)
+            , changes = \after -> do
+                news <- timeout changeWait $ atomically $ do
+                    n <- readTVar counter
+                    if n /= after then pure n else retry
+                maybe (readTVarIO counter) pure news
             }
     where
         projectFile pid = dir </> Text.unpack (unparse pid) <> ".json"
@@ -118,7 +194,56 @@ fileStore dir = do
                             summary = summarize (maybe firstRevision nextRevision now) project
                         writeAtomically (projectFile pid) (Aeson.encode project)
                         writeAtomically (summaryFile pid) (Aeson.encode summary)
+                        keep project summary
                         pure (Right summary)
+
+        historyDir pid = dir </> "history" </> Text.unpack (unparse pid)
+        undoFile pid = historyDir pid </> "undo.json"
+
+        -- Every save is news for whoever waits, whichever project it was.
+        counted :: TVar Int -> Either StoreError a -> IO (Either StoreError a)
+        counted tv r = do
+            either (const (pure ())) (const (atomically (readTVar tv >>= writeTVar tv . (+ 1)))) r
+            pure r
+
+        -- Each saved version under history/<id>/<revision>.json, the oldest pruned.
+        keep project summary = do
+            let
+                pid = projectId project
+            createDirectoryIfMissing True (historyDir pid)
+            writeAtomically (historyDir pid </> show (unparse (summaryRevision summary)) <> ".json") (Aeson.encode project)
+            kept <- keptRevisions pid
+            mapM_ (\r -> removeFile (historyDir pid </> show r <> ".json")) (take (length kept - historyLimit) kept)
+
+        keptRevisions :: ProjectId -> IO [Int]
+        keptRevisions pid = do
+            has <- doesDirectoryExist (historyDir pid)
+            names <- if has then listDirectory (historyDir pid) else pure []
+            pure (sort [n | name <- names, Just base <- [Text.stripSuffix ".json" (Text.pack name)], Right n <- [readInt base]])
+
+        readInt t = case reads (Text.unpack t) of
+            [(n, "")] -> Right (n :: Int)
+            _ -> Left ()
+
+        -- Where undo has got to: the version shown, and the ones redo brings back, newest first.
+        readUndo :: ProjectId -> IO (Maybe (Int, [Int]))
+        readUndo pid = do
+            has <- doesFileExist (undoFile pid)
+            raw <- if has then Aeson.decode <$> LBS.readFile (undoFile pid) else pure Nothing
+            pure (raw >>= \(at, rs) -> if at >= 0 && all (>= 0) rs then Just (at, rs) else Nothing)
+
+        writeUndo pid at rs = writeAtomically (undoFile pid) (Aeson.encode (at, rs))
+
+        forgetUndo pid = do
+            has <- doesFileExist (undoFile pid)
+            when has (removeFile (undoFile pid))
+
+        -- A kept version saved again as the newest revision.
+        restoreVersion pid r = do
+            old <- readParsed (historyDir pid </> show r <> ".json")
+            case old of
+                Left e -> pure (Left e)
+                Right project -> saveProject Nothing project
 
         writeAtomically path bytes = do
             (tmp, h) <- openTempFile dir (takeFileName path <> ".tmp")

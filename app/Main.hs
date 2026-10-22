@@ -13,7 +13,7 @@ import Anima.Assets (assetsApp)
 import Anima.Config (Config (..), configParser, portNumber)
 import Anima.Ids (newUuid)
 import Anima.Mcp (mcpApp)
-import Anima.Renders (rendersApp)
+import Anima.Renders (previewFrame, rendersApp)
 import Anima.Server (app)
 import Anima.Store (fileStore)
 
@@ -33,7 +33,7 @@ main = do
         Nothing -> pure ()
         Just p -> do
             putStrLn ("anima2d MCP on 127.0.0.1:" <> show (portNumber p))
-            _ <- forkIO (runSettings (listen p) (mcpApp store newUuid))
+            _ <- forkIO (runSettings (listen p) (mcpApp store newUuid (previewFrame cfg.dataDir newUuid)))
             pure ()
     putStrLn ("anima2d listening on 127.0.0.1:" <> show (portNumber cfg.port))
     -- Uploaded files are streamed outside Servant, which would read a whole body into memory.

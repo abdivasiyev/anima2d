@@ -7,7 +7,7 @@
  * meantime (another device, an agent over MCP), the server refuses it and this version is
  * kept as a copy rather than thrown away or forced over theirs.
  */
-import { listProjects, loadProject, loadSummary, saveProject } from "./api";
+import { listProjects, loadProject, loadSummary, saveProject, waitForChanges } from "./api";
 import { allLocal, getLocal, putLocal, type LocalCopy } from "./local";
 import { err, ok, type Result } from "./domain/result";
 import {
@@ -31,7 +31,8 @@ const ZERO: Revision = (() => {
 })();
 
 const PUSH_DELAY_MS = 1200;
-const POLL_MS = 10000;
+/** A look for news even when waiting on the server fails (an old server, a flaky link). */
+const POLL_MS = 30000;
 
 /** Your version, as a new project beside theirs. */
 const asCopy = (p: Project): Result<Project> => {
@@ -112,6 +113,7 @@ export class ProjectSync {
   private retry = 5000;
   private pollTimer = 0;
   private stopped = false;
+  private readonly watching = new AbortController();
 
   constructor(
     opened: Opened,
@@ -125,10 +127,39 @@ export class ProjectSync {
     this.onState(this.dirty ? "pending" : "saved");
     if (this.dirty) this.schedule(0);
     this.pollTimer = window.setInterval(() => void this.poll(), POLL_MS);
+    void this.watch();
+  }
+
+  /** Wait on the server for saves (long-polling) and look for a newer version after each. */
+  private async watch(): Promise<void> {
+    let seq: number | undefined;
+    while (!this.isStopped()) {
+      const r = await waitForChanges(seq, this.watching.signal);
+      if (this.isStopped()) return;
+      if (r.kind !== "ok") {
+        // Offline or refused: the interval keeps looking; try waiting again in a while.
+        seq = undefined;
+        await new Promise((done) => setTimeout(done, POLL_MS));
+        continue;
+      }
+      const news = seq !== undefined && r.value !== seq;
+      seq = r.value;
+      if (news) await this.poll();
+    }
+  }
+
+  /** Back in front: catch up on anything saved while hidden. */
+  resume(): void {
+    void this.poll();
   }
 
   get hasUnsaved(): boolean {
     return this.dirty || this.pushing !== undefined;
+  }
+
+  // Read through methods: these change while a request is out.
+  private isStopped(): boolean {
+    return this.stopped;
   }
 
   private isDirty(): boolean {
@@ -231,6 +262,7 @@ export class ProjectSync {
 
   stop(): void {
     this.stopped = true;
+    this.watching.abort();
     window.clearInterval(this.pollTimer);
   }
 }

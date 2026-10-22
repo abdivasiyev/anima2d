@@ -61,6 +61,21 @@ const parsed = <T>(r: Reply<Raw>, parse: (raw: Raw) => Result<T>): Reply<T> => {
   return v.ok ? { kind: "ok", value: v.value } : { kind: "error", error: v.error };
 };
 
+/**
+ * Wait for news: the server answers when anything is saved after save number `after`
+ * (undefined asks for the current number at once), or after about 20 seconds with nothing
+ * new. Answers the latest number.
+ */
+export const waitForChanges = async (after: number | undefined, signal: AbortSignal): Promise<Reply<number>> =>
+  parsed(
+    await request(after === undefined ? "/api/changes" : `/api/changes?after=${after}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(35000)]) }),
+    (r) => andThen(object(r.body), (o) => (typeof o.seq === "number" && Number.isInteger(o.seq) && o.seq >= 0 ? ok(o.seq) : err("the server sent no change number"))),
+  );
+
+/** Delete a project on the server (its files go to the server's trash). */
+export const deleteProject = async (id: ProjectId): Promise<Reply<null>> =>
+  parsed(await request(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }), () => ok(null));
+
 export const listProjects = async (): Promise<Reply<ProjectSummary[]>> => parsed(await request("/api/projects"), (r) => parseSummaries(r.body));
 
 export const loadProject = async (id: ProjectId): Promise<Reply<{ project: Project; revision: Revision }>> =>

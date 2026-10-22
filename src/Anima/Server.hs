@@ -15,18 +15,21 @@ module Anima.Server
 where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Text (Text)
 import Servant
     ( Capture
+    , DeleteNoContent
     , Get
     , Handler
     , Header
     , Headers
     , JSON
+    , NoContent (..)
     , PlainText
     , Put
+    , QueryParam
     , Raw
     , ReqBody
     , Server
@@ -66,6 +69,11 @@ type Api =
             :> Header "X-Base-Revision" Revision
             :> ReqBody '[JSON] Project
             :> Put '[JSON] ProjectSummary
+        -- Deleting moves the project's files to trash/ on the server.
+        :<|> "api" :> "projects" :> Capture "id" ProjectId :> DeleteNoContent
+        -- Long-polling: answers when anything is saved after save number @after@ (or after
+        -- a while with nothing new), with the latest number; editors then look again.
+        :<|> "api" :> "changes" :> QueryParam "after" Int :> Get '[JSON] Aeson.Value
         :<|> Raw
 
 -- | The application, given where projects live and where the built editor is.
@@ -79,6 +87,8 @@ server store staticDir =
         :<|> getProject
         :<|> (\pid -> snd <$> (liftIO (store.load pid) >>= orFail))
         :<|> putProject
+        :<|> (\pid -> NoContent <$ (liftIO (store.remove pid) >>= orFail))
+        :<|> (\after -> (\n -> Aeson.object ["seq" Aeson..= n]) <$> liftIO (store.changes (fromMaybe (-1) after)))
         :<|> serveDirectoryWith editorFiles
     where
         editorFiles =

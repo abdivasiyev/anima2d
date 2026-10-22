@@ -26,6 +26,7 @@ import Data.Text (Text)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
@@ -36,6 +37,7 @@ import Anima.Store (ProjectStore (..), StoreError (..), modifyProject)
 import Anima.Types.Parse (Parse (..))
 import Anima.Types.Project
     ( Item
+    , Project
     , ProjectSummary
     , addItemsAt
     , addLayer
@@ -53,10 +55,13 @@ import Anima.Types.Project
 
 -- | The tools that change a project; the server lists the same names for read-only agents.
 writeTools :: [Text]
-writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer", "set_layer"]
+writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer", "set_layer", "undo", "redo"]
 
-mcpApp :: ProjectStore -> IO Text -> Wai.Application
-mcpApp store newId req respond
+-- | A frame of a project drawn as a PNG: (frame from 0, width in pixels).
+type Preview = Project -> Int -> Int -> IO (Either Text LBS.ByteString)
+
+mcpApp :: ProjectStore -> IO Text -> Preview -> Wai.Application
+mcpApp store newId preview req respond
     | Wai.pathInfo req /= ["mcp"] = respond (Wai.responseLBS Http.status404 [] "not found")
     | Wai.requestMethod req /= Http.methodPost = respond (Wai.responseLBS Http.status405 [("Allow", "POST")] "POST JSON-RPC to /mcp")
     | otherwise = do
@@ -67,7 +72,7 @@ mcpApp store newId req respond
                 -- A notification (initialized, cancelled): nothing to answer.
                 Nothing -> respond (Wai.responseLBS Http.status202 [] "")
                 Just rid -> do
-                    reply <- handle store newId (textField "method" msg) (lookupOr (Object mempty) "params" msg)
+                    reply <- handle store newId preview (textField "method" msg) (lookupOr (Object mempty) "params" msg)
                     respond . json Http.status200 $ case reply of
                         Right result -> object ["jsonrpc" .= ("2.0" :: Text), "id" .= rid, "result" .= result]
                         Left (code, why) -> rpcError rid code why
@@ -86,8 +91,8 @@ textField k o = case KeyMap.lookup (Key.fromText k) o of
     Just (String t) -> t
     _ -> ""
 
-handle :: ProjectStore -> IO Text -> Text -> Value -> IO (Either (Int, Text) Value)
-handle store newId method params = case method of
+handle :: ProjectStore -> IO Text -> Preview -> Text -> Value -> IO (Either (Int, Text) Value)
+handle store newId preview method params = case method of
     "initialize" ->
         pure . Right
             $ object
@@ -99,7 +104,7 @@ handle store newId method params = case method of
     "ping" -> pure (Right (object []))
     "tools/list" -> pure (Right (object ["tools" .= tools]))
     "tools/call" -> case params of
-        Object p -> Right <$> callTool store newId (textField "name" p) (lookupOr (Object mempty) "arguments" p)
+        Object p -> Right <$> callTool store newId preview (textField "name" p) (lookupOr (Object mempty) "arguments" p)
         _ -> pure (Left (-32602, "expected params with a tool name"))
     _ -> pure (Left (-32601, "unknown method"))
     where
@@ -167,6 +172,13 @@ tools =
         , ("motion", object ["type" .= ["object" :: Text, "null"], "description" .= ("{pivot:[x,y], keys:[{frame, position:[dx,dy], scale, rotation, opacity, ease}]}" :: Text)])
         ]
         ["project_id"]
+    , tool "undo" "Bring back the version before the latest change to the project (yours, the editor's or another agent's), as a new save that open editors show. Repeat to go further back; up to 100 versions are kept." [("project_id", str "From list_projects")] ["project_id"]
+    , tool "redo" "Take back the last undo. Any other change since then ends redo." [("project_id", str "From list_projects")] ["project_id"]
+    , tool
+        "preview"
+        "See a frame as it exports: a PNG of the whole picture (every visible layer, through the camera). Use it to check what you drew. Drawn by the Mac's render agent, in a second or two."
+        [("project_id", str "From list_projects"), ("frame", int "Frame number on the timeline, from 1 (default 1)"), ("width", int "Image width in pixels, 64 to 1920 (default 960)")]
+        ["project_id"]
     , tool "item_format" "The JSON for every kind of item and for layer motion, with examples. Read this before drawing." [] []
     ]
     where
@@ -216,8 +228,8 @@ itemFormat =
         , "Animate by adding drawings (add_drawing with copy=true) and changing each a little: a few pixels of movement per drawing reads as smooth motion at 12 to 24 fps."
         ]
 
-callTool :: ProjectStore -> IO Text -> Text -> Value -> IO Value
-callTool store newId name args = case name of
+callTool :: ProjectStore -> IO Text -> Preview -> Text -> Value -> IO Value
+callTool store newId preview name args = case name of
     "list_projects" -> either storeFailure (ok . fmap summaryJson) <$> store.list
     "item_format" -> pure (textResult False itemFormat)
     "get_project" -> withArgs $ \o -> do
@@ -237,6 +249,31 @@ callTool store newId name args = case name of
         pure $ do
             loaded <- store.load pid
             pure $ either storeFailure (\(p, _) -> either failure ok (pickLayer want p >>= \li -> drawingAt li n p)) loaded
+    "preview" -> withArgs $ \o -> do
+        pid <- arg o "project_id" (asText >=>. parse)
+        frame <- optional o "frame" asInt 1
+        width <- optional o "width" asInt 960
+        pure $ do
+            loaded <- store.load pid
+            case loaded of
+                Left e -> pure (storeFailure e)
+                Right (p, _)
+                    | frame < 1 || frame > duration p -> pure (failure ("expected a frame from 1 to " <> tshowInt (duration p)))
+                    | width < 64 || width > 1920 -> pure (failure "expected a width from 64 to 1920 pixels")
+                    | otherwise -> do
+                        png <- preview p (frame - 1) width
+                        pure $ case png of
+                            Left why -> failure why
+                            Right bytes ->
+                                object
+                                    [ "content"
+                                        .= [ object ["type" .= ("image" :: Text), "mimeType" .= ("image/png" :: Text), "data" .= Text.decodeUtf8 (Base64.encode (LBS.toStrict bytes))]
+                                           , object ["type" .= ("text" :: Text), "text" .= ("Frame " <> tshowInt frame <> " of " <> tshowInt (duration p) <> ", as exported (white paper, through the camera)." :: Text)]
+                                           ]
+                                    , "isError" .= False
+                                    ]
+    "undo" -> history "Nothing older to go back to" store.undo
+    "redo" -> history "Nothing to redo: there was no undo since the last change" store.redo
     "set_layer" -> withArgs $ \o -> do
         pid <- arg o "project_id" (asText >=>. parse)
         want <- optional o "layer" (fmap Just . asText) Nothing
@@ -268,6 +305,9 @@ callTool store newId name args = case name of
             items <- arg o "items" (asList >=>. traverseIndexed (parse @Item))
             pure (saved <$> modifyProject store pid (\p -> pickLayer want p >>= \li -> f li n items p))
         saved = either (either storeFailure failure) (ok . summaryJson)
+        history none step = withArgs $ \o -> do
+            pid <- arg o "project_id" (asText >=>. parse)
+            pure (either storeFailure (maybe (failure none) (ok . summaryJson)) <$> step pid)
         withArgs k = case args of
             Object o -> either (pure . failure) Prelude.id (k o)
             _ -> pure (failure "expected arguments as an object")
@@ -334,3 +374,6 @@ storeFailure = \case
 
 summaryJson :: ProjectSummary -> Value
 summaryJson = Aeson.toJSON
+
+tshowInt :: Int -> Text
+tshowInt = Text.pack . show

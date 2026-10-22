@@ -21,5 +21,8 @@ Reflect.set(globalThis, "OffscreenCanvas", SkiaOffscreenCanvas);
 export const skiaImages = (pathOf: (asset: string) => string): ImageLoader => async (asset) =>
   (await loadImage(pathOf(asset))) as unknown as CanvasImageSource & { readonly width: number; readonly height: number };
 
+/** The canvas's pixels as a PNG (Skia encodes it). */
+export const pngOf = (canvas: OffscreenCanvas): Buffer => (canvas as unknown as { toBuffer(mime: "image/png"): Buffer }).toBuffer("image/png");
+
 /** A project's font file, under the family its text items name. */
 export const registerFont = (path: string, family: string): boolean => GlobalFonts.registerFromPath(path, family) !== null;

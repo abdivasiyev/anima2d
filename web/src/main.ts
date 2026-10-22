@@ -46,7 +46,7 @@ const route = async (): Promise<void> => {
   const match = /^#\/p\/(.+)$/.exec(location.hash);
   if (match?.[1] === undefined) {
     document.title = "anima2D";
-    app.replaceChildren(homeScreen(go));
+    app.replaceChildren(homeScreen(go, controller.signal));
     return;
   }
   const id = parseProjectId(decodeURIComponent(match[1]));

@@ -15,7 +15,10 @@
   on the Mac.
 * The toolbar moves to either edge; the timeline resizes; the page never zooms on a
   double tap or pinch on the iPad; playback stays responsive on the iPad.
-* MCP: set_layer (blend, clipping, motion keys); text and image items.
+* MCP: set_layer (blend, clipping, motion keys); text and image items; preview (a PNG
+  of a frame), undo and redo.
+* Near-instant sync between devices (long-polling); delete projects (to the server's
+  trash); clicking empty timeline space clears the selection.
 
 ## 0.1.0.0
 

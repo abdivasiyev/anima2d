@@ -1693,3 +1693,51 @@ a.btn {
   color: var(--text);
   box-shadow: var(--float-shadow);
 }
+
+/* A project card with its options button over the picture's corner. */
+.card-wrap {
+  position: relative;
+}
+
+.card-wrap .card {
+  width: 100%;
+}
+
+.card-more {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+  box-shadow: var(--float-shadow);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.card-wrap:hover .card-more,
+.card-more:focus-visible {
+  opacity: 1;
+}
+
+/* Touch screens have no hover: the button always shows. */
+@media (hover: none) {
+  .card-more {
+    opacity: 1;
+  }
+}
+
+.btn.danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+dialog.confirm {
+  max-width: 380px;
+}

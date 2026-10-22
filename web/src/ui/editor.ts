@@ -468,6 +468,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     scrub: (f) => {
       scrub(f);
     },
+    clearSelection: (f) => {
+      scrub(f);
+    },
     setLoop: (r) => {
       loop = r;
       renderTimeline();
@@ -2861,7 +2864,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     spaceHeld = false;
     shiftHeld = false;
   }, opts);
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush(); }, opts);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flush(); else sync.resume(); }, opts);
   window.addEventListener("beforeunload", (e) => { if (sync.hasUnsaved) e.preventDefault(); }, opts);
   signal.addEventListener("abort", () => {
     closeMenu();

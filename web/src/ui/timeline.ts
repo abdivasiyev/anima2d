@@ -5,7 +5,7 @@
  *
  * It owns no state: the editor hands it a model and gets intentions back.
  */
-import { celStart, duration, isDrawing, type Cel, type Project } from "../domain/project";
+import { celAt, celStart, duration, isDrawing, type Cel, type Project } from "../domain/project";
 import { h } from "./dom";
 import { icon } from "./icons";
 
@@ -29,6 +29,8 @@ export interface TimelineModel {
 export interface TimelineEvents {
   selectCel(layer: number, cel: number, extend: boolean): void;
   scrub(t: number): void;
+  /** A click on a lane's empty space: drop the selected run, move the playhead there. */
+  clearSelection(t: number): void;
   setLoop(loop: LoopRange | undefined): void;
   toggleVisible(layer: number): void;
   toggleLock(layer: number): void;
@@ -136,15 +138,23 @@ export class Timeline {
       const head = h("div", { class: "tl-head", "aria-current": String(i === m.layer) }, eye, lock, title, more);
       const lane = h("div", { class: "tl-lane" });
       lane.style.width = `${width}px`;
+      lane.addEventListener("click", (e) => {
+        if (e.target !== lane) return;
+        this.on.clearSelection(Math.max(0, Math.floor(e.offsetX / this.unit)));
+      });
       if (isDrawing(layer)) {
         let start = 0;
+        // The edited drawing shows as chosen only while the playhead is on it: past the
+        // layer's end (an empty click there) nothing is.
+        const shown = celAt(layer, m.t);
         for (const [c, cel] of layer.cels.entries()) {
           const w = cel.hold * this.unit;
-          const selected = i === m.layer && (c === m.cel || (m.rangeEnd !== undefined && c >= Math.min(m.cel, m.rangeEnd) && c <= Math.max(m.cel, m.rangeEnd)));
+          const here = i === m.layer && c === m.cel && (shown === c || m.rangeEnd !== undefined);
+          const selected = here || (i === m.layer && m.rangeEnd !== undefined && c >= Math.min(m.cel, m.rangeEnd) && c <= Math.max(m.cel, m.rangeEnd));
           const cell = h("button", {
             type: "button",
             class: `cel mark-${cel.mark}${cel.items.length === 0 ? " empty" : ""}`,
-            "aria-current": String(i === m.layer && c === m.cel),
+            "aria-current": String(here),
             "aria-selected": String(selected),
             "aria-label": `${layer.name}, drawing ${c + 1}`,
             title: `Drawing ${c + 1} · ${cel.hold} ${cel.hold === 1 ? "frame" : "frames"}${cel.mark === "none" ? "" : ` · ${cel.mark}`}`,

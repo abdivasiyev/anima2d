@@ -76,6 +76,16 @@ export const getLocal = async (id: ProjectId): Promise<Result<LocalCopy | undefi
   }
 };
 
+/** Forget this device's copy of a project. */
+export const deleteLocal = async (id: ProjectId): Promise<Result<null>> => {
+  try {
+    await run("readwrite", (s) => s.delete(id));
+    return ok(null);
+  } catch {
+    return err("the device storage refused the delete");
+  }
+};
+
 export const allLocal = async (): Promise<LocalCopy[]> => {
   try {
     const raws: unknown = await run("readonly", (s) => s.getAll());

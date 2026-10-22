@@ -1,10 +1,12 @@
 /** The project list, and the dialog that starts a new project. */
+import { deleteProject, waitForChanges } from "../api";
+import { deleteLocal } from "../local";
 import { createProject, listAll } from "../sync";
 import { CANVAS_PRESETS, newProject } from "../domain/edit";
 import { FPS_VALUES, parseFps, parseProjectId, parseProjectName, type ProjectSummary } from "../domain/project";
 import { h } from "./dom";
 import { icon, mark } from "./icons";
-import { openMenu } from "./menu";
+import { openMenu, type MenuItem } from "./menu";
 
 const cardArt = (s: ProjectSummary): HTMLElement => {
   // The paper at the project's own aspect ratio: tells 16:9 from Shorts at a glance.
@@ -15,7 +17,31 @@ const cardArt = (s: ProjectSummary): HTMLElement => {
   return h("div", { class: "card-art" }, paper);
 };
 
-const card = (s: ProjectSummary, open: (s: ProjectSummary) => void): HTMLElement => {
+/** Ask before something that cannot be taken back from here. */
+const confirmDialog = (heading: string, body: string, action: string): Promise<boolean> =>
+  new Promise((resolve) => {
+    const cancel = h("button", { type: "button", class: "btn" }, "Cancel");
+    const yes = h("button", { type: "button", class: "btn danger" }, action);
+    const dialog = h("dialog", { class: "confirm" }, h("form", { method: "dialog" }, h("div", { class: "dialog-body" }, h("h3", {}, heading), h("p", { class: "hint" }, body)), h("div", { class: "dialog-actions" }, cancel, yes)));
+    const done = (v: boolean): void => {
+      dialog.close();
+      dialog.remove();
+      resolve(v);
+    };
+    cancel.addEventListener("click", () => {
+      done(false);
+    });
+    yes.addEventListener("click", () => {
+      done(true);
+    });
+    dialog.addEventListener("cancel", () => {
+      done(false);
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  });
+
+const card = (s: ProjectSummary, open: (s: ProjectSummary) => void, remove: (s: ProjectSummary) => void): HTMLElement => {
   const b = h(
     "button",
     { class: "card", type: "button" },
@@ -23,14 +49,26 @@ const card = (s: ProjectSummary, open: (s: ProjectSummary) => void): HTMLElement
     h("div", { class: "card-name" }, s.name),
     h("div", { class: "card-meta" }, `${s.canvas.width} × ${s.canvas.height} · ${s.fps} fps · ${s.frameCount} ${s.frameCount === 1 ? "drawing" : "drawings"}`),
   );
+  const items = (): MenuItem[] => [
+    { label: "Open", action: () => { open(s); } },
+    "separator",
+    { label: "Delete…", danger: true, action: () => { remove(s); } },
+  ];
   b.addEventListener("click", () => {
     open(s);
   });
   b.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    openMenu(e.clientX, e.clientY, [{ label: "Open", action: () => { open(s); } }]);
+    openMenu(e.clientX, e.clientY, items());
   });
-  return b;
+  // A visible way in for touch, where a long press is easy to miss.
+  const more = h("button", { type: "button", class: "card-more", "aria-label": `${s.name} options` }, "⋯");
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const r = more.getBoundingClientRect();
+    openMenu(r.left, r.bottom + 4, items());
+  });
+  return h("div", { class: "card-wrap" }, b, more);
 };
 
 const newProjectDialog = (onCreated: (id: string) => void): HTMLDialogElement => {
@@ -100,7 +138,8 @@ const newProjectDialog = (onCreated: (id: string) => void): HTMLDialogElement =>
   return dialog;
 };
 
-export const homeScreen = (go: (hash: string) => void): HTMLElement => {
+/** The project list; it refreshes itself when anything is saved, until `signal` ends it. */
+export const homeScreen = (go: (hash: string) => void, signal: AbortSignal): HTMLElement => {
   const list = h("div", {});
   const dialog = newProjectDialog((id) => {
     go(`#/p/${id}`);
@@ -120,9 +159,11 @@ export const homeScreen = (go: (hash: string) => void): HTMLElement => {
     dialog,
   );
 
-  void listAll().then((all) => {
+  const offline = h("div", { class: "notice offline", hidden: true }, "The server is out of reach. These are the projects saved on this device; edits sync when it is back.");
+  list.before(offline);
+  const show = (): Promise<void> => listAll().then((all) => {
     const r = all.ok ? { ok: true as const, value: all.value.projects } : all;
-    if (all.ok && all.value.offline) list.before(h("div", { class: "notice offline" }, "The server is out of reach. These are the projects saved on this device; edits sync when it is back."));
+    offline.hidden = !(all.ok && all.value.offline);
     if (!r.ok) {
       list.replaceChildren(h("div", { class: "notice" }, `Projects could not be loaded: ${r.error}.`));
       return;
@@ -138,13 +179,55 @@ export const homeScreen = (go: (hash: string) => void): HTMLElement => {
         "div",
         { class: "grid" },
         ...r.value.map((s) =>
-          card(s, (picked) => {
-            go(`#/p/${picked.id}`);
-          }),
+          card(
+            s,
+            (picked) => {
+              go(`#/p/${picked.id}`);
+            },
+            (picked) => {
+              void remove(picked);
+            },
+          ),
         ),
       ),
     );
   });
+
+  const remove = async (picked: ProjectSummary): Promise<void> => {
+    const sure = await confirmDialog(`Delete “${picked.name}”?`, "It leaves your projects on every device. The server keeps its files in its trash folder, so it can still be brought back by hand.", "Delete");
+    if (!sure) return;
+    const r = await deleteProject(picked.id);
+    // Gone already (another device deleted it) counts as done.
+    if (r.kind === "offline") {
+      list.prepend(h("div", { class: "notice" }, "Deleting needs the server, which is out of reach."));
+      return;
+    }
+    if (r.kind === "error" && !r.error.includes("no such project")) {
+      list.prepend(h("div", { class: "notice" }, `It could not be deleted: ${r.error}.`));
+      return;
+    }
+    await deleteLocal(picked.id);
+    await show();
+  };
+
+  void show();
+  void (async () => {
+    // Another device or an agent saved something: show it.
+    // Read through a function: the signal changes while each request is out.
+    const ended = (): boolean => signal.aborted;
+    let seq: number | undefined;
+    while (!ended()) {
+      const r = await waitForChanges(seq, signal);
+      if (ended()) return;
+      if (r.kind !== "ok") {
+        seq = undefined;
+        await new Promise((done) => setTimeout(done, 30000));
+        continue;
+      }
+      if (seq !== undefined && r.value !== seq) await show();
+      seq = r.value;
+    }
+  })();
 
   return root;
 };
