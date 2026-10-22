@@ -6,10 +6,12 @@
  * A cel is addressed by `Where`: its layer (bottom to top) and its place on that layer.
  */
 import { brandChecked } from "./brand";
-import { andThen, err, ok, unwrap, type Result } from "./result";
+import { andThen, each, err, ok, unwrap, type Result } from "./result";
 import {
   isDrawing,
   makeCel,
+  makeItem,
+  makeMotion,
   makeLayer,
   makeProject,
   parseCanvas,
@@ -19,6 +21,9 @@ import {
   type AssetId,
   type AudioTrack,
   type CameraKey,
+  type Color,
+  type MotionKey,
+  type Vec,
   type Canvas,
   type Cel,
   type DrawingLayer,
@@ -32,7 +37,6 @@ import {
   type LayerFields,
   type Mark,
   type Media,
-  type Opacity,
   type Pose,
   type Project,
   type ProjectId,
@@ -49,7 +53,7 @@ export interface Where {
 const ONE: Hold = unwrap(parseHold(1));
 
 const rebuild = (p: Project, layers: readonly Layer[], camera = p.camera, audio = p.audio, palette = p.palette): Result<Project> =>
-  makeProject(p.id, p.name, p.canvas, p.fps, layers, camera, audio, palette);
+  makeProject(p.id, p.name, p.canvas, p.fps, layers, camera, audio, palette, p.fonts);
 
 const blankCel = (): Cel => unwrap(makeCel(ONE, "none", []));
 
@@ -94,9 +98,9 @@ export const newProject = (id: ProjectId, name: ProjectName, canvas: Canvas, fps
     ),
   );
 
-export const rename = (p: Project, name: ProjectName): Result<Project> => makeProject(p.id, name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette);
+export const rename = (p: Project, name: ProjectName): Result<Project> => makeProject(p.id, name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts);
 
-export const setFps = (p: Project, fps: Fps): Result<Project> => makeProject(p.id, p.name, p.canvas, fps, p.layers, p.camera, p.audio, p.palette);
+export const setFps = (p: Project, fps: Fps): Result<Project> => makeProject(p.id, p.name, p.canvas, fps, p.layers, p.camera, p.audio, p.palette, p.fonts);
 
 // Items ---------------------------------------------------------------------------------
 
@@ -221,9 +225,10 @@ export const moveLayer = (p: Project, from: number, to: number): Result<Project>
   return rebuild(p, [...rest.slice(0, k), l, ...rest.slice(k)]);
 };
 
-type LayerPatch = Partial<Pick<LayerFields, "name" | "visible" | "locked" | "opacity">> & { readonly holdLast?: boolean };
+type LookPatch = Partial<Pick<LayerFields, "name" | "visible" | "locked" | "opacity" | "blend" | "clip" | "motion">>;
+type LayerPatch = LookPatch & { readonly holdLast?: boolean };
 
-/** Change a layer's name, visibility, lock, opacity or (drawing layers) hold-last. */
+/** Change a layer's name, visibility, lock, opacity, blend, clipping, motion or (drawing layers) hold-last. */
 export const updateLayer = (p: Project, i: number, patch: LayerPatch): Result<Project> => {
   const l = p.layers[i];
   if (l === undefined) return err("expected a layer that exists");
@@ -234,8 +239,11 @@ export const updateLayer = (p: Project, i: number, patch: LayerPatch): Result<Pr
   return andThen(makeLayer(next), (layer) => rebuild(p, p.layers.map((x, j) => (j === i ? layer : x))));
 };
 
-const pick = (patch: LayerPatch): Partial<Pick<LayerFields, "name" | "visible" | "locked" | "opacity">> => {
-  const out: { name?: LabelName; visible?: boolean; locked?: boolean; opacity?: Opacity } = {};
+const pick = (patch: LayerPatch): LookPatch => {
+  const out: { -readonly [K in keyof LookPatch]: LookPatch[K] } = {};
+  if (patch.blend !== undefined) out.blend = patch.blend;
+  if (patch.clip !== undefined) out.clip = patch.clip;
+  if (patch.motion !== undefined) out.motion = patch.motion;
   if (patch.name !== undefined) out.name = patch.name;
   if (patch.visible !== undefined) out.visible = patch.visible;
   if (patch.locked !== undefined) out.locked = patch.locked;
@@ -266,3 +274,71 @@ export const CANVAS_PRESETS: readonly { readonly label: string; readonly detail:
   { label: "Shorts", detail: "1080 × 1920 · 9:16", canvas: unwrap(parseCanvas({ width: 1080, height: 1920 })) },
   { label: "Square", detail: "1080 × 1080 · 1:1", canvas: unwrap(parseCanvas({ width: 1080, height: 1080 })) },
 ];
+
+// Layer motion ---------------------------------------------------------------------------
+
+/** Set the key at `key.frame` (adding it, or replacing the one there); a first key also sets the pivot. */
+export const setMotionKey = (p: Project, i: number, key: MotionKey, pivot: Vec): Result<Project> => {
+  const l = p.layers[i];
+  if (l === undefined) return err("expected a layer that exists");
+  const keys = [...(l.motion?.keys ?? []).filter((k) => k.frame !== key.frame), key].sort((a, b) => a.frame - b.frame);
+  return andThen(makeMotion(l.motion?.pivot ?? pivot, keys), (motion) => updateLayer(p, i, { motion }));
+};
+
+/** Remove the key at `frame`; removing the last one leaves the layer still. */
+export const removeMotionKey = (p: Project, i: number, frame: number): Result<Project> => {
+  const l = p.layers[i];
+  if (l?.motion == null) return err("expected a layer with motion");
+  const keys = l.motion.keys.filter((k) => k.frame !== frame);
+  if (keys.length === l.motion.keys.length) return err("No key on this frame");
+  if (keys.length === 0) return clearMotion(p, i);
+  return andThen(makeMotion(l.motion.pivot, keys), (motion) => updateLayer(p, i, { motion }));
+};
+
+/** Move the point a layer turns and scales about. */
+export const setPivot = (p: Project, i: number, pivot: Vec): Result<Project> => {
+  const l = p.layers[i];
+  if (l?.motion == null) return err("expected a layer with motion");
+  return andThen(makeMotion(pivot, l.motion.keys), (motion) => updateLayer(p, i, { motion }));
+};
+
+/** Drop every key: the layer stays where its drawings are. */
+export const clearMotion = (p: Project, i: number): Result<Project> => {
+  const l = p.layers[i];
+  if (l === undefined) return err("expected a layer that exists");
+  return andThen(makeLayer({ ...l, motion: null }), (layer) => rebuild(p, p.layers.map((x, j) => (j === i ? layer : x))));
+};
+
+// Palette --------------------------------------------------------------------------------
+
+const recolorItem = (item: Item, swap: (c: Color) => Color): Result<Item> => {
+  switch (item.kind) {
+    case "erase":
+    case "image":
+      return ok(item);
+    case "shape":
+      return makeItem({ ...item, color: swap(item.color), fill: item.fill === null ? null : swap(item.fill) });
+    case "text":
+    case "stroke":
+    case "scatter":
+    case "curve":
+    case "fill":
+      return makeItem({ ...item, color: swap(item.color) });
+  }
+};
+
+export const setPalette = (p: Project, palette: readonly Color[]): Result<Project> => rebuild(p, p.layers, p.camera, p.audio, palette);
+
+/** Every item, in every drawing of every layer, drawn in `from` is drawn in `to`; the palette too. */
+export const recolorAll = (p: Project, from: Color, to: Color): Result<Project> => {
+  const swap = (c: Color): Color => (c === from ? to : c);
+  const layers = each([...p.layers], (l) => {
+    if (l.kind !== "drawing") return ok(l);
+    const cels = each([...l.cels], (c) => andThen(each([...c.items], (item) => recolorItem(item, swap)), (items) => makeCel(c.hold, c.mark, items, c.pose)));
+    return andThen(cels, (cs) => {
+      const [first, ...rest] = cs;
+      return first === undefined ? err("expected a drawing") : makeLayer({ ...l, cels: [first, ...rest] });
+    });
+  });
+  return andThen(layers, (ls) => rebuild(p, ls, p.camera, p.audio, [...new Set(p.palette.map(swap))]));
+};

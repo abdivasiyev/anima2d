@@ -60,34 +60,50 @@ export interface Placement {
 
 const STILL: Placement = { m: IDENTITY, fade: 1 };
 
+/** A layer's position offset, scale, turn and fade at a frame, before they become a matrix. */
+export interface MotionValues {
+  readonly x: number;
+  readonly y: number;
+  readonly scale: number;
+  readonly rotation: number;
+  readonly opacity: number;
+}
+
+export const REST: MotionValues = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1 };
+
 /** A layer's motion at frame `t`: held before its first key and after its last, eased between. */
-export const placementAt = (layer: Layer, t: number): Placement => {
-  const motion = layer.motion;
-  if (motion === null) return STILL;
-  const keys = motion.keys;
-  const [px, py] = motion.pivot;
-  const place = (x: number, y: number, k: number, r: number, fade: number): Placement => ({
-    m: compose(translate(x, y), about(px, py, compose(rotation(r), scaling(k)))),
-    fade,
-  });
+export const motionAt = (layer: Layer, t: number): MotionValues => {
+  const keys = layer.motion?.keys;
+  if (keys === undefined) return REST;
+  const at = (k: (typeof keys)[number]): MotionValues => ({ x: k.position[0], y: k.position[1], scale: k.scale, rotation: k.rotation, opacity: k.opacity });
   const first = keys[0];
-  if (t <= first.frame) return place(first.position[0], first.position[1], first.scale, first.rotation, first.opacity);
+  if (t <= first.frame) return at(first);
   for (let i = 0; i + 1 < keys.length; i++) {
     const a = keys[i];
     const b = keys[i + 1];
     if (a === undefined || b === undefined || t > b.frame) continue;
     const u = ease(a.ease, (t - a.frame) / (b.frame - a.frame));
+    // Scale moves evenly in ratio; turns take the short way.
     const turn = Math.atan2(Math.sin(b.rotation - a.rotation), Math.cos(b.rotation - a.rotation));
-    return place(
-      a.position[0] + (b.position[0] - a.position[0]) * u,
-      a.position[1] + (b.position[1] - a.position[1]) * u,
-      Math.exp(Math.log(a.scale) + (Math.log(b.scale) - Math.log(a.scale)) * u),
-      a.rotation + turn * u,
-      a.opacity + (b.opacity - a.opacity) * u,
-    );
+    return {
+      x: a.position[0] + (b.position[0] - a.position[0]) * u,
+      y: a.position[1] + (b.position[1] - a.position[1]) * u,
+      scale: Math.exp(Math.log(a.scale) + (Math.log(b.scale) - Math.log(a.scale)) * u),
+      rotation: a.rotation + turn * u,
+      opacity: a.opacity + (b.opacity - a.opacity) * u,
+    };
   }
-  const last = keys[keys.length - 1] ?? first;
-  return place(last.position[0], last.position[1], last.scale, last.rotation, last.opacity);
+  return at(keys[keys.length - 1] ?? first);
+};
+
+/** The matrix for motion values about a pivot: scale and turn about it, then move. */
+export const motionMatrix = (v: MotionValues, pivot: readonly [number, number]): Affine =>
+  compose(translate(v.x, v.y), about(pivot[0], pivot[1], compose(rotation(v.rotation), scaling(v.scale))));
+
+export const placementAt = (layer: Layer, t: number): Placement => {
+  if (layer.motion === null) return STILL;
+  const v = motionAt(layer, t);
+  return { m: motionMatrix(v, layer.motion.pivot), fade: v.opacity };
 };
 
 /** The canvas operation for a blend; the CSS `mix-blend-mode` is the same name but for "add". */

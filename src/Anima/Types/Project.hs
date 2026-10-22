@@ -66,7 +66,7 @@ where
 
 import Control.Monad (unless, when, (>=>))
 import Data.Aeson (FromJSON, ToJSON, Value (..), object, (.=))
-import Data.Char (isAsciiLower, isControl, isDigit, isHexDigit, ord, toLower)
+import Data.Char (isAsciiLower, isAsciiUpper, isControl, isDigit, isHexDigit, ord, toLower)
 import Data.Containers.ListUtils (nubOrd)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (fromMaybe, isJust)
@@ -448,6 +448,75 @@ data CurveItem = CurveItem {layer :: Plane, color :: Color, size :: BrushSize, o
 data FillItem = FillItem {layer :: Plane, color :: Color, opacity :: Opacity, polygons :: NonEmpty (NonEmpty Vec)}
     deriving stock (Eq, Show)
 
+-- | Lines of text in a font, by the middle of the block, its turn and its alignment.
+data TextItem = TextItem
+    { layer :: Plane
+    , text :: Text
+    , font :: Text
+    , style :: TextStyle
+    , fontSize :: Double
+    , align :: Align
+    , color :: Color
+    , opacity :: Opacity
+    , center :: Vec
+    , rotation :: Angle
+    }
+    deriving stock (Eq, Show)
+
+data TextStyle = Regular | Bold | Italic | BoldItalic
+    deriving stock (Bounded, Enum, Eq, Show)
+
+textStyleName :: TextStyle -> Text
+textStyleName = \case
+    Regular -> "normal"
+    Bold -> "bold"
+    Italic -> "italic"
+    BoldItalic -> "bold-italic"
+
+data Align = AlignLeft | AlignCenter | AlignRight
+    deriving stock (Bounded, Enum, Eq, Show)
+
+alignName :: Align -> Text
+alignName = \case
+    AlignLeft -> "left"
+    AlignCenter -> "center"
+    AlignRight -> "right"
+
+-- | A picture from the project's assets, by its middle, drawn size, turn and mirroring.
+data ImageItem = ImageItem
+    { layer :: Plane
+    , asset :: AssetId
+    , opacity :: Opacity
+    , center :: Vec
+    , width :: Extent
+    , height :: Extent
+    , rotation :: Angle
+    , mirrored :: Bool
+    }
+    deriving stock (Eq, Show)
+
+maxTextLength :: Int
+maxTextLength = 2000
+
+textBodyFrom :: Value -> Either Text Text
+textBodyFrom =
+    asText >=> \t ->
+        if
+            | Text.null (Text.strip t) || utf16Length t > maxTextLength -> Left ("expected text of 1 to " <> tshow maxTextLength <> " characters")
+            | Text.any (\c -> isControl c && c /= '\n') t -> Left "expected text without control characters other than line breaks"
+            | otherwise -> Right t
+
+-- | A font family: one of the browser's (serif, sans-serif, ...) or one the project brings.
+fontFamilyFrom :: Value -> Either Text Text
+fontFamilyFrom =
+    asText >=> \t ->
+        if Text.length t >= 1 && Text.length t <= 64 && Text.all (\c -> isAsciiUpper c || isAsciiLower c || isDigit c || c `elem` [' ', '-', '_']) t && Text.strip t == t
+            then Right t
+            else Left "expected a font family of 1 to 64 letters, digits, spaces, '-' or '_'"
+
+fontSizeFrom :: Value -> Either Text Double
+fontSizeFrom = ranged Prelude.id 4 2000 "expected a font size from 4 to 2000"
+
 data Item
     = Stroke StrokeItem
     | Erase EraseItem
@@ -455,10 +524,12 @@ data Item
     | Shape ShapeItem
     | Curve CurveItem
     | Fill FillItem
+    | TextBlock TextItem
+    | Picture ImageItem
     deriving stock (Eq, Show)
     deriving (FromJSON, ToJSON) via Parsed Item
 
-data Kind = KStroke | KErase | KScatter | KShape | KCurve | KFill
+data Kind = KStroke | KErase | KScatter | KShape | KCurve | KFill | KText | KImage
     deriving stock (Bounded, Enum, Eq)
 
 kindName :: Kind -> Text
@@ -469,12 +540,14 @@ kindName = \case
     KShape -> "shape"
     KCurve -> "curve"
     KFill -> "fill"
+    KText -> "text"
+    KImage -> "image"
 
 instance Parse Item where
     type Raw Item = Value
     parse v = do
         o <- asObject v
-        kind <- field "kind" (oneOf kindName "expected an item kind of \"stroke\", \"erase\", \"scatter\", \"shape\", \"curve\" or \"fill\"") o
+        kind <- field "kind" (oneOf kindName "expected an item kind of \"stroke\", \"erase\", \"scatter\", \"shape\", \"curve\", \"fill\", \"text\" or \"image\"") o
         item <- case kind of
             KStroke ->
                 fmap Stroke
@@ -520,6 +593,30 @@ instance Parse Item where
             KFill ->
                 fmap Fill
                     $ FillItem <$> field "layer" planeFrom o <*> field "color" colorFrom o <*> field "opacity" opacityFrom o <*> field "polygons" polygonsFrom o
+            KText ->
+                fmap TextBlock
+                    $ TextItem
+                        <$> field "layer" planeFrom o
+                        <*> field "text" textBodyFrom o
+                        <*> field "font" fontFamilyFrom o
+                        <*> field "style" (oneOf textStyleName "expected a style of \"normal\", \"bold\", \"italic\" or \"bold-italic\"") o
+                        <*> field "size" fontSizeFrom o
+                        <*> field "align" (oneOf alignName "expected an alignment of \"left\", \"center\" or \"right\"") o
+                        <*> field "color" colorFrom o
+                        <*> field "opacity" opacityFrom o
+                        <*> field "center" vecFrom o
+                        <*> field "rotation" angleFrom o
+            KImage ->
+                fmap Picture
+                    $ ImageItem
+                        <$> field "layer" planeFrom o
+                        <*> field "asset" assetIdFrom o
+                        <*> field "opacity" opacityFrom o
+                        <*> field "center" vecFrom o
+                        <*> field "width" extentFrom o
+                        <*> field "height" extentFrom o
+                        <*> field "rotation" angleFrom o
+                        <*> field "flip" boolFrom o
         checkFillBudget item
         pure item
     unparse = \case
@@ -563,6 +660,32 @@ instance Parse Item where
                 , "color" .= colorValue color
                 , "opacity" .= opacityValue opacity
                 , "polygons" .= list [list (map vecValue (NonEmpty.toList p)) | p <- NonEmpty.toList polygons]
+                ]
+        TextBlock TextItem {..} ->
+            object
+                [ "kind" .= kindName KText
+                , "layer" .= planeName layer
+                , "text" .= text
+                , "font" .= font
+                , "style" .= textStyleName style
+                , "size" .= number fontSize
+                , "align" .= alignName align
+                , "color" .= colorValue color
+                , "opacity" .= opacityValue opacity
+                , "center" .= vecValue center
+                , "rotation" .= let Angle a = rotation in number a
+                ]
+        Picture ImageItem {..} ->
+            object
+                [ "kind" .= kindName KImage
+                , "layer" .= planeName layer
+                , "asset" .= let AssetId a = asset in a
+                , "opacity" .= opacityValue opacity
+                , "center" .= vecValue center
+                , "width" .= let Extent e = width in number e
+                , "height" .= let Extent e = height in number e
+                , "rotation" .= let Angle a = rotation in number a
+                , "flip" .= mirrored
                 ]
         where
             sizeValue (BrushSize s) = number s
@@ -992,9 +1115,25 @@ data Project = Project
     , audio :: [AudioTrack]
     , palette :: [Color]
     -- ^ The project's colours, to pick from and to recolour everything by.
+    , fonts :: [ProjectFont]
+    -- ^ Font files the project brings, by the family its text items name.
     }
     deriving stock (Eq, Show)
     deriving (FromJSON, ToJSON) via Parsed Project
+
+data ProjectFont = ProjectFont {family :: Text, fontAsset :: AssetId}
+    deriving stock (Eq, Show)
+
+maxFonts :: Int
+maxFonts = 32
+
+fontsFrom :: Value -> Either Text [ProjectFont]
+fontsFrom = \case
+    Null -> Right []
+    v -> (asArray >=> bounded "fonts" 0 maxFonts >=> indexed (asObject >=> \o -> ProjectFont <$> field "family" fontFamilyFrom o <*> field "asset" assetIdFrom o)) v
+
+fontValue :: ProjectFont -> Value
+fontValue f = let AssetId a = f.fontAsset in object ["family" .= f.family, "asset" .= a]
 
 maxPalette :: Int
 maxPalette = 64
@@ -1017,6 +1156,7 @@ checked p
     | or (zipWith (\a b -> b.frame <= a.frame) p.camera (drop 1 p.camera)) = Left "camera: expected keys in frame order, one per frame"
     | length p.audio > maxAudioTracks = Left ("audio: expected 0 to " <> tshow maxAudioTracks <> " tracks")
     | distinct (map (\a -> let LayerId t = a.trackId in t) p.audio) = Left "audio: expected every track id to be different"
+    | distinct (map (.family) p.fonts) = Left "fonts: expected every font family to be different"
     | otherwise = Right p
     where
         distinct xs = length (nubOrd xs) /= length xs
@@ -1047,13 +1187,14 @@ instance Parse Project where
             if version < 3
                 then do
                     cels <- field "frames" (celsFrom "frames" (if version == 1 then celOldFrom "strokes" strokeV1From else celOldFrom "items" parse)) o
-                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = [], palette = []}
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = [], palette = [], fonts = []}
                 else do
                     ls <- field "layers" (asArray >=> bounded "layers" 1 maxLayers >=> indexed layerFrom >=> nonEmpty ("expected 1 to " <> tshow maxLayers <> " layers")) o
                     cam <- field "camera" (asArray >=> bounded "keys" 0 maxCameraKeys >=> indexed cameraKeyFrom) o
                     au <- field "audio" (asArray >=> bounded "tracks" 0 maxAudioTracks >=> indexed audioTrackFrom) o
                     pal <- field "palette" paletteFrom o
-                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au, palette = pal}
+                    fs <- field "fonts" fontsFrom o
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au, palette = pal, fonts = fs}
     unparse p =
         object
             $ [ "format" .= (3 :: Int)
@@ -1066,6 +1207,7 @@ instance Parse Project where
               , "audio" .= map audioTrackValue p.audio
               ]
                 <> ["palette" .= map colorValue p.palette | not (null p.palette)]
+                <> ["fonts" .= map fontValue p.fonts | not (null p.fonts)]
 
 -- | The timeline's length: its longest drawing layer.
 duration :: Project -> Int
@@ -1075,7 +1217,7 @@ duration p = maximum (1 :| [sum [n | Cel (Hold n) _ _ _ <- NonEmpty.toList cels]
 
 -- | A new project with one drawing layer and one empty drawing.
 newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project
-newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = [], palette = []}
+newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = [], palette = [], fonts = []}
 
 {- | The layer an agent means: by id, or (none given) the topmost drawing layer. Returned
 as its index, bottom first.

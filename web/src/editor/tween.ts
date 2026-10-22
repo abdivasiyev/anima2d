@@ -16,6 +16,7 @@ import {
   parseBrushSize,
   parseColor,
   parseExtent,
+  parseFontSize,
   parseHold,
   parseOpacity,
   parsePoint,
@@ -130,6 +131,26 @@ export const morphItem = (a: Item, b: Item, u: number): Result<Item> =>
       const polys = yield* bind(each(a.polygons, (pa, i) => andThen(morphVecs(pa, b.polygons[i] ?? pa, u), nonEmpty)));
       return makeItem({ ...a, polygons: yield* bind(nonEmpty(polys)), opacity: yield* opacity(a.opacity, b.opacity), color: lerpColor(a.color, b.color, u) });
     }
+    if (a.kind === "text" && b.kind === "text")
+      // The words are the first drawing's until halfway; size, place, turn and colour move.
+      return makeItem({
+        ...(u < 0.5 ? a : b),
+        center: yield* bind(parseVec([lerp(a.center[0], b.center[0], u), lerp(a.center[1], b.center[1], u)])),
+        size: yield* bind(parseFontSize(lerp(a.size, b.size, u))),
+        rotation: normalizeAngle(lerpAngle(a.rotation, b.rotation, u)),
+        opacity: yield* opacity(a.opacity, b.opacity),
+        color: lerpColor(a.color, b.color, u),
+      });
+    if (a.kind === "image" && b.kind === "image" && a.asset === b.asset)
+      return makeItem({
+        ...a,
+        center: yield* bind(parseVec([lerp(a.center[0], b.center[0], u), lerp(a.center[1], b.center[1], u)])),
+        width: yield* bind(parseExtent(lerp(a.width, b.width, u))),
+        height: yield* bind(parseExtent(lerp(a.height, b.height, u))),
+        rotation: normalizeAngle(lerpAngle(a.rotation, b.rotation, u)),
+        opacity: yield* opacity(a.opacity, b.opacity),
+        flip: u < 0.5 ? a.flip : b.flip,
+      });
     return err(a.kind === b.kind ? `expected two ${a.kind}s of the same kind` : `expected matching items (a ${a.kind} cannot become a ${b.kind})`);
   });
 

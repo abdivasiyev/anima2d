@@ -11,15 +11,19 @@ import {
   normalizeAngle,
   parseBrushSize,
   parseExtent,
+  parseFontSize,
   parsePoint,
   parseVec,
   type Color,
   type Item,
   type ItemFields,
   type Point,
+  type ImageFields,
   type ShapeFields,
+  type TextFields,
   type Vec,
 } from "../domain/project";
+import { textLayout } from "./media";
 
 export type XY = readonly [number, number];
 
@@ -66,6 +70,25 @@ const curveSamples = (pts: readonly [Vec, Vec, Vec], n = 32): XY[] => {
   });
 };
 
+/** The corners of a w × h box about (cx, cy), turned by `rotation`. */
+const boxCorners = (cx: number, cy: number, w: number, h: number, rot: number): XY[] => {
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  return [
+    [-w / 2, -h / 2],
+    [w / 2, -h / 2],
+    [w / 2, h / 2],
+    [-w / 2, h / 2],
+  ].map(([x = 0, y = 0]): XY => [cx + x * c - y * s, cy + x * s + y * c]);
+};
+
+/** The box a text or image item fills. */
+export const blockCorners = (item: TextFields | ImageFields): XY[] => {
+  if (item.kind === "image") return boxCorners(item.center[0], item.center[1], item.width, item.height, item.rotation);
+  const lay = textLayout(item);
+  return boxCorners(item.center[0], item.center[1], lay.width, lay.height, item.rotation);
+};
+
 /** Points that trace the item, for lasso selection and bounds. */
 export const itemOutline = (item: ItemFields): XY[] => {
   switch (item.kind) {
@@ -79,6 +102,9 @@ export const itemOutline = (item: ItemFields): XY[] => {
       return curveSamples(item.points);
     case "fill":
       return item.polygons.flatMap((poly) => poly.map((v): XY => [v[0], v[1]]));
+    case "text":
+    case "image":
+      return blockCorners(item);
   }
 };
 
@@ -94,6 +120,8 @@ const reach = (item: ItemFields): number => {
       // Stamps are about 1.6× the size, lifted off the path.
       return item.size * (item.brush === "birds" ? 3 : 1.8);
     case "fill":
+    case "text":
+    case "image":
       return 0;
   }
 };
@@ -189,6 +217,11 @@ export const hits = (item: ItemFields, x: number, y: number, r: number): boolean
       for (const poly of item.polygons) if (insidePolygon(x, y, poly)) inside = !inside;
       return inside;
     }
+    case "text":
+    case "image": {
+      const box = blockCorners(item);
+      return insidePolygon(x, y, box) || polylineDistance(x, y, box, true) <= r;
+    }
   }
 };
 
@@ -282,6 +315,20 @@ export const transformItem = (item: Item, m: Affine): Result<Item> => {
         each(item.polygons, (poly) => andThen(each(poly, (v) => mapVec(m, v)), first)),
         (polys) => andThen(first(polys), (polygons) => makeItem({ ...item, polygons })),
       );
+    case "text":
+    case "image": {
+      // As for shapes below; text never mirrors (it stays readable), a picture flips.
+      const ux = m[0] * Math.cos(item.rotation) + m[2] * Math.sin(item.rotation);
+      const uy = m[1] * Math.cos(item.rotation) + m[3] * Math.sin(item.rotation);
+      const rotation = normalizeAngle(det < 0 ? Math.atan2(-uy, -ux) : Math.atan2(uy, ux));
+      return andThen(mapVec(m, item.center), (center) =>
+        item.kind === "text"
+          ? andThen(parseFontSize(Math.max(4, Math.min(2000, item.size * k))), (size) => makeItem({ ...item, size, center, rotation }))
+          : andThen(parseExtent(item.width * k), (width) =>
+              andThen(parseExtent(item.height * k), (height) => makeItem({ ...item, center, width, height, rotation, flip: det < 0 ? !item.flip : item.flip })),
+            ),
+      );
+    }
     case "shape": {
       // The shape's own x axis after the transform. A mirror flips its y axis too, which
       // every shape here is symmetric under once its x axis is turned half a turn.
@@ -303,9 +350,12 @@ export const transformItem = (item: Item, m: Affine): Result<Item> => {
 export const recolor = (item: Item, color: Color): Result<Item> => {
   switch (item.kind) {
     case "erase":
+    case "image":
       return ok(item);
     case "shape":
       return makeItem({ ...item, color, fill: item.fill === null ? null : color });
+    case "text":
+      return makeItem({ ...item, color });
     case "stroke":
     case "scatter":
     case "curve":

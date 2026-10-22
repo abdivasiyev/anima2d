@@ -262,7 +262,67 @@ export interface FillFields {
   readonly polygons: NonEmpty<NonEmpty<Vec>>;
 }
 
-export type ItemFields = StrokeFields | EraseFields | ScatterFields | ShapeFields | CurveFields | FillFields;
+export const TEXT_STYLES = ["normal", "bold", "italic", "bold-italic"] as const;
+export type TextStyle = (typeof TEXT_STYLES)[number];
+export const ALIGNS = ["left", "center", "right"] as const;
+export type Align = (typeof ALIGNS)[number];
+
+export const MAX_TEXT_LENGTH = 2000;
+
+/** What a text item says: 1 to 2000 characters, line breaks allowed, no other control characters. */
+export type TextBody = Brand<string, "TextBody">;
+
+export const parseTextBody = (raw: unknown): Result<TextBody> =>
+  andThen(string(raw), (s) => {
+    if (s.trim().length === 0 || s.length > MAX_TEXT_LENGTH) return err(`expected text of 1 to ${MAX_TEXT_LENGTH} characters`);
+    // eslint-disable-next-line no-control-regex -- control characters other than line breaks are refused
+    if (/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/.test(s)) return err("expected text without control characters other than line breaks");
+    return ok(brandChecked<string, "TextBody">(s));
+  });
+
+/** A font family: one of the browser's (serif, sans-serif, ...) or one the project brings. */
+export type FontFamily = Brand<string, "FontFamily">;
+
+export const parseFontFamily = (raw: unknown): Result<FontFamily> =>
+  andThen(string(raw), (s) =>
+    /^[A-Za-z0-9 _-]{1,64}$/.test(s) && s.trim() === s ? ok(brandChecked<string, "FontFamily">(s)) : err("expected a font family of 1 to 64 letters, digits, spaces, '-' or '_'"),
+  );
+
+/** A font size in canvas pixels: 4 to 2000. */
+export type FontSize = Brand<number, "FontSize">;
+
+export const parseFontSize = (raw: unknown): Result<FontSize> =>
+  andThen(number(raw), (n) => (n >= 4 && n <= 2000 ? ok(brandChecked<number, "FontSize">(n)) : err("expected a font size from 4 to 2000")));
+
+/** Lines of text in a font, by the middle of the block, its turn and its alignment. */
+export interface TextFields {
+  readonly kind: "text";
+  readonly layer: Plane;
+  readonly text: TextBody;
+  readonly font: FontFamily;
+  readonly style: TextStyle;
+  readonly size: FontSize;
+  readonly align: Align;
+  readonly color: Color;
+  readonly opacity: Opacity;
+  readonly center: Vec;
+  readonly rotation: Angle;
+}
+
+/** A picture from the project's assets, by its middle, drawn size, turn and mirroring. */
+export interface ImageFields {
+  readonly kind: "image";
+  readonly layer: Plane;
+  readonly asset: AssetId;
+  readonly opacity: Opacity;
+  readonly center: Vec;
+  readonly width: Extent;
+  readonly height: Extent;
+  readonly rotation: Angle;
+  readonly flip: boolean;
+}
+
+export type ItemFields = StrokeFields | EraseFields | ScatterFields | ShapeFields | CurveFields | FillFields | TextFields | ImageFields;
 export type Item = Brand<ItemFields, "Item">;
 export type ItemKind = ItemFields["kind"];
 
@@ -283,6 +343,8 @@ export const makeItem = (fields: ItemFields): Result<Item> => {
     }
     case "shape":
     case "curve":
+    case "text":
+    case "image":
       break;
   }
   return ok(brandChecked<ItemFields, "Item">(fields));
@@ -323,8 +385,8 @@ const parsePolygons = (raw: unknown): Result<NonEmpty<NonEmpty<Vec>>> =>
     ),
   );
 
-const ITEM_KINDS = ["stroke", "erase", "scatter", "shape", "curve", "fill"] as const;
-const parseKind = oneOf(ITEM_KINDS, 'expected an item kind of "stroke", "erase", "scatter", "shape", "curve" or "fill"');
+const ITEM_KINDS = ["stroke", "erase", "scatter", "shape", "curve", "fill", "text", "image"] as const;
+const parseKind = oneOf(ITEM_KINDS, 'expected an item kind of "stroke", "erase", "scatter", "shape", "curve", "fill", "text" or "image"');
 
 /** Fields are read in wire order, so the first rejection is the same one the server names. */
 export const parseItem = (raw: unknown): Result<Item> =>
@@ -385,6 +447,32 @@ export const parseItem = (raw: unknown): Result<Item> =>
           opacity: yield* field(o, "opacity", parseOpacity),
           polygons: yield* field(o, "polygons", parsePolygons),
         });
+      case "text":
+        return makeItem({
+          kind: "text",
+          layer: yield* field(o, "layer", parsePlane),
+          text: yield* field(o, "text", parseTextBody),
+          font: yield* field(o, "font", parseFontFamily),
+          style: yield* field(o, "style", oneOf(TEXT_STYLES, 'expected a style of "normal", "bold", "italic" or "bold-italic"')),
+          size: yield* field(o, "size", parseFontSize),
+          align: yield* field(o, "align", oneOf(ALIGNS, 'expected an alignment of "left", "center" or "right"')),
+          color: yield* field(o, "color", parseColor),
+          opacity: yield* field(o, "opacity", parseOpacity),
+          center: yield* field(o, "center", parseVec),
+          rotation: yield* field(o, "rotation", parseAngle),
+        });
+      case "image":
+        return makeItem({
+          kind: "image",
+          layer: yield* field(o, "layer", parsePlane),
+          asset: yield* field(o, "asset", parseAssetId),
+          opacity: yield* field(o, "opacity", parseOpacity),
+          center: yield* field(o, "center", parseVec),
+          width: yield* field(o, "width", parseExtent),
+          height: yield* field(o, "height", parseExtent),
+          rotation: yield* field(o, "rotation", parseAngle),
+          flip: yield* field(o, "flip", parseBool),
+        });
     }
   });
 
@@ -417,6 +505,32 @@ export const unparseItem = (item: Item): unknown => {
       return { kind: item.kind, layer: item.layer, color: item.color, size: item.size, opacity: item.opacity, points: item.points.map(vec) };
     case "fill":
       return { kind: item.kind, layer: item.layer, color: item.color, opacity: item.opacity, polygons: item.polygons.map((p) => p.map(vec)) };
+    case "text":
+      return {
+        kind: item.kind,
+        layer: item.layer,
+        text: item.text,
+        font: item.font,
+        style: item.style,
+        size: item.size,
+        align: item.align,
+        color: item.color,
+        opacity: item.opacity,
+        center: vec(item.center),
+        rotation: item.rotation,
+      };
+    case "image":
+      return {
+        kind: item.kind,
+        layer: item.layer,
+        asset: item.asset,
+        opacity: item.opacity,
+        center: vec(item.center),
+        width: item.width,
+        height: item.height,
+        rotation: item.rotation,
+        flip: item.flip,
+      };
   }
 };
 
@@ -866,9 +980,32 @@ export type Project = Brand<
     readonly audio: readonly AudioTrack[];
     /** The project's colours, to pick from and to recolour everything by. */
     readonly palette: readonly Color[];
+    /** Font files the project brings. */
+    readonly fonts: readonly ProjectFont[];
   },
   "Project"
 >;
+
+export const MAX_FONTS = 32;
+
+/** A font file the project brings, by the family its text items name. */
+export type ProjectFont = Brand<{ readonly family: FontFamily; readonly asset: AssetId }, "ProjectFont">;
+
+export const makeProjectFont = (family: FontFamily, asset: AssetId): ProjectFont => brandChecked({ family, asset });
+
+const parseFonts = (raw: unknown): Result<ProjectFont[]> =>
+  raw === undefined || raw === null
+    ? ok([])
+    : andThen(andThen(array(raw), (xs) => bounded("fonts", 0, MAX_FONTS, xs)), (xs) =>
+        each(xs, (x) =>
+          parseWith(function* () {
+            const o = yield* bind(object(x));
+            const family = yield* field(o, "family", parseFontFamily);
+            const asset = yield* field(o, "asset", parseAssetId);
+            return ok(makeProjectFont(family, asset));
+          }),
+        ),
+      );
 
 export const MAX_PALETTE = 64;
 
@@ -885,6 +1022,7 @@ export const makeProject = (
   camera: readonly CameraKey[] = [],
   audio: readonly AudioTrack[] = [],
   palette: readonly Color[] = [],
+  fonts: readonly ProjectFont[] = [],
 ): Result<Project> => {
   const ne = nonEmpty(layers);
   if (ne === undefined || layers.length > MAX_LAYERS) return err(`layers: expected 1 to ${MAX_LAYERS} layers`);
@@ -895,7 +1033,8 @@ export const makeProject = (
   if (audio.length > MAX_AUDIO_TRACKS) return err(`audio: expected 0 to ${MAX_AUDIO_TRACKS} tracks`);
   if (new Set(audio.map((a) => a.id)).size !== audio.length) return err("audio: expected every track id to be different");
   if (palette.length > MAX_PALETTE) return err(`palette: expected 0 to ${MAX_PALETTE} colours`);
-  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio, palette }));
+  if (new Set(fonts.map((f) => f.family)).size !== fonts.length) return err("fonts: expected every font family to be different");
+  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio, palette, fonts }));
 };
 
 const firstLayer = (cels: NonEmpty<Cel>): Result<Layer> => {
@@ -925,7 +1064,8 @@ export const parseProject = (raw: unknown): Result<Project> =>
     const camera = yield* field(o, "camera", (v) => andThen(andThen(array(v), (xs) => bounded("keys", 0, MAX_CAMERA_KEYS, xs)), (xs) => each(xs, parseCameraKey)));
     const audio = yield* field(o, "audio", (v) => andThen(andThen(array(v), (xs) => bounded("tracks", 0, MAX_AUDIO_TRACKS, xs)), (xs) => each(xs, parseAudioTrack)));
     const palette = yield* field(o, "palette", parsePalette);
-    return makeProject(id, name, canvas, fps, layers, camera, audio, palette);
+    const fonts = yield* field(o, "fonts", parseFonts);
+    return makeProject(id, name, canvas, fps, layers, camera, audio, palette, fonts);
   });
 
 /** The wire shape the server parses; always format 3. */
@@ -939,6 +1079,7 @@ export const unparseProject = (p: Project): unknown => ({
   camera: p.camera.map((k) => ({ frame: k.frame, center: [k.center[0], k.center[1]], zoom: k.zoom, rotation: k.rotation, ease: k.ease })),
   audio: p.audio.map((a) => ({ id: a.id, asset: a.asset, name: a.name, offset: a.offset, volume: a.volume, muted: a.muted })),
   ...(p.palette.length === 0 ? {} : { palette: [...p.palette] }),
+  ...(p.fonts.length === 0 ? {} : { fonts: p.fonts.map((f) => ({ family: f.family, asset: f.asset })) }),
 });
 
 // Time ----------------------------------------------------------------------------------

@@ -32,6 +32,20 @@
      "mark": "key",
      "items": [
       {
+       "kind": "image",
+       "layer": "color",
+       "asset": "bg-0001",
+       "opacity": 1,
+       "center": [
+        960,
+        540
+       ],
+       "width": 1920,
+       "height": 1080,
+       "rotation": 0,
+       "flip": false
+      },
+      {
        "kind": "fill",
        "layer": "color",
        "color": "#9fc7e8",
@@ -89,6 +103,22 @@
        "width": 120,
        "height": 120,
        "rotation": 0
+      },
+      {
+       "kind": "text",
+       "layer": "line",
+       "text": "Hello,\nworld",
+       "font": "Caveat",
+       "style": "bold",
+       "size": 96,
+       "align": "center",
+       "color": "#1c1c1e",
+       "opacity": 1,
+       "center": [
+        960,
+        200
+       ],
+       "rotation": -0.1
       }
      ]
     },
@@ -211,5 +241,11 @@
   "#1c1c1e",
   "#c2413b",
   "#9fc7e8"
+ ],
+ "fonts": [
+  {
+   "family": "Caveat",
+   "asset": "font-caveat"
+  }
  ]
 }

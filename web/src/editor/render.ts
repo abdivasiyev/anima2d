@@ -10,7 +10,8 @@
 import { getStroke } from "perfect-freehand";
 
 import type { BrushKind, Cel, ItemFields, Point, ScatterKind } from "../domain/project";
-import { shapeCorners } from "./geometry";
+import { blockCorners, shapeCorners } from "./geometry";
+import { drawText, imageFor } from "./media";
 
 /** Either kind of 2D context: on-screen canvases and off-screen layers share every call used here. */
 export type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -359,6 +360,34 @@ export const drawItem = (ctx: Ctx, item: ItemFields, opts: DrawOptions = {}): vo
       }
       ctx.fill("evenodd");
       break;
+    case "text":
+      ctx.globalAlpha = item.opacity;
+      drawText(ctx, item, opts.tint ?? item.color);
+      break;
+    case "image": {
+      ctx.globalAlpha = item.opacity;
+      const image = opts.tint === undefined ? imageFor(item.asset) : undefined;
+      if (image === undefined) {
+        // Not here yet (or an onion skin, which shows only where it is): its outline.
+        ctx.strokeStyle = opts.tint ?? "#8e8e96";
+        ctx.fillStyle = opts.tint === undefined ? "rgba(142, 142, 150, 0.12)" : "transparent";
+        ctx.lineWidth = Math.max(2, minSize);
+        ctx.beginPath();
+        for (const [i, c] of blockCorners(item).entries()) {
+          if (i === 0) ctx.moveTo(c[0], c[1]);
+          else ctx.lineTo(c[0], c[1]);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        break;
+      }
+      ctx.translate(item.center[0], item.center[1]);
+      ctx.rotate(item.rotation);
+      if (item.flip) ctx.scale(-1, 1);
+      ctx.drawImage(image, -item.width / 2, -item.height / 2, item.width, item.height);
+      break;
+    }
   }
   ctx.restore();
 };
