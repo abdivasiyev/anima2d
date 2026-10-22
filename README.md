@@ -100,6 +100,28 @@ two.
   on the Mac through the render agent (H.264 and HEVC on VideoToolbox, or ProRes 4444).
   A transparent background is kept by PNG frames, GIFs and ProRes.
 
+## Desktop app
+
+A native editor, written in Haskell with GTK3, that runs on macOS and Linux:
+
+```sh
+just desktop
+```
+
+It opens projects from a folder on this computer (the server's own store runs inside
+the app, so it works without a network) or from your anima2D server (its address, plus
+any headers your sign-in gate needs). It shares the project format and the parsers with
+the server, so projects move freely between the browser, the iPad and the desktop. Its
+renderer is drawn with Cairo and matches the browser's.
+
+So far it opens and plays projects: the canvas (zoom with the wheel, drag to pan), the
+timeline (click to move the playhead and choose a layer), onion skin and playback, and
+it updates live when another device or an agent saves. Drawing tools and the chat
+sidebar come next.
+
+`anima2d-desktop render <project.anima2d.json> <frame> <width> <out.png>` draws one frame
+without opening a window.
+
 ## Layout
 
 | Path | What |
@@ -107,6 +129,7 @@ two.
 | `src/`, `app/`, `test/` | The server, in Haskell: the projects API, uploads, the render queue, MCP |
 | `web/` | The editor, in TypeScript (Vite, no UI framework) |
 | `render/` | The Mac render agent (Node, Skia, ffmpeg VideoToolbox) |
+| `desktop/` | The native desktop editor (Haskell, GTK3, Cairo) |
 | `fixtures/` | Parser cases both test suites run: accept, upgrade and reject alike |
 | `examples/` | Example projects to import, their preview GIFs, and the script that builds them (`just examples`) |
 | `docs/conventions.md` | **Parse, don't validate** and the other house rules; read first |

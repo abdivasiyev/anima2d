@@ -40,3 +40,7 @@ render:
 # The example projects and their preview GIFs, drawn by the editor's own renderer on Skia.
 examples:
     cd render && npm install && npx esbuild ../examples/build.ts --bundle --platform=node --format=esm --target=node20 --external:@napi-rs/canvas --outfile=dist/examples.mjs --log-level=warning && node dist/examples.mjs ../examples
+
+# The native desktop editor (GTK3): build and open it.
+desktop:
+    nix develop .#desktop -c cabal --project-file=cabal.project.desktop run anima2d-desktop

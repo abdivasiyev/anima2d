@@ -29,10 +29,26 @@ library
                     , Anima.Desktop.Random
                     , Anima.Desktop.Draw
                     , Anima.Desktop.Scene
+                    , Anima.Desktop.Backend
+                    , Anima.Desktop.Config
+                    , Anima.Desktop.Ui
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d
+                    , aeson
+                    , bytestring
+                    , case-insensitive
                     , containers
+                    , directory
+                    , filepath
+                    , gi-gdk3
+                    , gi-gdkpixbuf
+                    , gi-glib
+                    , gi-gtk3
+                    , haskell-gi-base
+                    , http-client
+                    , http-client-tls
+                    , http-types
                     , gi-cairo-render
                     , gi-pango
                     , gi-pangocairo
