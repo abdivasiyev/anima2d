@@ -84,3 +84,20 @@ test-suite spec
                     , bytestring
                     , containers
                     , text
+
+-- Drives the real window; needs a display session, so it runs on demand (`just desktop-ui`).
+test-suite ui
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Ui.hs
+    hs-source-dirs:   test
+    ghc-options:      -threaded
+    build-depends:    base >=4.20 && <5
+                    , anima2d
+                    , anima2d-desktop
+                    , directory
+                    , filepath
+                    , gi-cairo-connector
+                    , gi-cairo-render
+                    , gi-gtk3
+                    , text

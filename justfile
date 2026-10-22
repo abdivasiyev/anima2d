@@ -44,3 +44,7 @@ examples:
 # The native desktop editor (GTK3): build and open it.
 desktop:
     nix develop .#desktop -c cabal --project-file=cabal.project.desktop run anima2d-desktop
+
+# The desktop's UI test: drives the real window offscreen; snapshots land in desktop/ui-snapshots.
+desktop-ui:
+    nix develop .#desktop -c cabal --project-file=cabal.project.desktop test anima2d-desktop:ui --test-show-details=direct

@@ -7,14 +7,14 @@ change to the project by its edit functions, so the desktop cannot write what th
 would refuse. Every edit is undoable and saved a moment later, against the revision it
 started from; if someone saved first, this version is kept as a copy.
 -}
-module Anima.Desktop.Ui (runApp) where
+module Anima.Desktop.Ui (runApp, Window (..), Probe (..), Pointer (..), Phase (..), buildWindow, createProject) where
 
 import Anima.Ids (newUuid)
 import Anima.Types.Parse (Parse (..))
 import Anima.Types.Project hiding (duration)
 import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM, forM_, unless, void, when)
+import Control.Monad (forM, forM_, unless, void, when, zipWithM_)
 import Data.GI.Base (AttrOp (..), get, new, on)
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
@@ -154,12 +154,67 @@ after ms act = do
 
 -- App -------------------------------------------------------------------------------------
 
+-- | The window, and what a test (or 'runApp') needs to drive it.
+data Window = Window
+    { window :: Gtk.Window
+    , canvasArea :: Gtk.DrawingArea
+    , connectTo :: Connection -> IO ()
+    , openId :: ProjectId -> IO ()
+    , inspect :: IO Probe
+    , say :: Text -> IO ()
+    , pointer :: Pointer -> IO Bool
+    , key :: Text -> Bool -> Bool -> IO Bool
+    , keyUp :: Text -> IO Bool
+    , click :: Text -> IO ()
+    }
+
+data Phase = Press | Move | Release
+    deriving stock (Eq, Show)
+
+{- | The pen, mouse or a finger on the canvas, in widget pixels: what the event handler
+reads from GDK and what a test sends.
+-}
+data Pointer = Pointer {phase :: Phase, px :: Double, py :: Double, pressure :: Double, button :: Word, panning :: Bool, held :: Bool}
+
+-- | What the window holds right now, as a test sees it.
+data Probe = Probe
+    { edited :: Maybe Project
+    , toolName :: Text
+    , chosen :: [Int]
+    , undoSteps :: Int
+    , unsaved :: Bool
+    , note :: Text
+    , onLayer :: Int
+    , atFrame :: Int
+    , screenOf :: (Double, Double) -> (Double, Double)
+    }
+
 runApp :: IO ()
 runApp = do
     _ <- Gtk.init Nothing
+    w <- buildWindow
+    _ <- on w.window #destroy Gtk.mainQuit
+    -- First run asks where projects live; after that the choice is remembered.
+    saved <- loadConnection
+    c <- case saved of
+        Just c -> pure (Just c)
+        Nothing -> do
+            r <- connectionDialog w.window Nothing
+            forM_ r saveConnection
+            pure r
+    case c of
+        Just conn -> w.connectTo conn
+        Nothing -> w.say "Choose where projects live with Connection…"
+    Gtk.main
+
+-- | Builds and shows the window; nothing is connected yet.
+buildWindow :: IO Window
+buildWindow = do
+    -- Dark, as the canvas surround and the timeline are.
+    settings <- Gtk.settingsGetDefault
+    forM_ settings $ \x -> Gtk.setSettingsGtkApplicationPreferDarkTheme x True
     st <- newIORef initial
     win <- new Gtk.Window [#title := "anima2D", #defaultWidth := 1360, #defaultHeight := 880]
-    _ <- on win #destroy Gtk.mainQuit
     header <- new Gtk.HeaderBar [#showCloseButton := True, #title := "anima2D"]
     Gtk.windowSetTitlebar win (Just header)
     backBtn <- Gtk.buttonNewWithLabel "Projects"
@@ -208,13 +263,27 @@ runApp = do
     Gtk.widgetSetSizeRequest alphaS 100 (-1)
     sizeL <- Gtk.labelNew (Just "Size")
     alphaL <- Gtk.labelNew (Just "Opacity")
+    -- The tools stand in a rail beside the canvas; the bar above shows the chosen tool's
+    -- options, then colour, size and opacity.
+    rail <- Gtk.boxNew Gtk.OrientationVertical 4
+    Gtk.widgetSetMarginStart rail 6
+    Gtk.widgetSetMarginTop rail 6
+    pack rail [toW selectR, toW brushR, toW scatterR, toW eraserR, toW shapeR, toW fillR, toW textR]
     tools <- Gtk.boxNew Gtk.OrientationHorizontal 6
     Gtk.widgetSetMarginStart tools 8
     Gtk.widgetSetMarginEnd tools 8
     Gtk.widgetSetMarginTop tools 4
-    pack tools [toW selectR, toW brushR, toW brushC, toW scatterR, toW scatterC, toW eraserR, toW eraserC, toW shapeR, toW shapeC, toW filledB, toW fillR, toW textR]
+    pack tools [toW brushC, toW scatterC, toW eraserC, toW shapeC, toW filledB]
     toolsEnd <- sequence [toW colourB, toW sizeL, toW sizeS, toW alphaL, toW alphaS]
     forM_ (reverse toolsEnd) $ \w -> Gtk.boxPackEnd tools w False False 0
+    options <- sequence [toW brushC, toW scatterC, toW eraserC, toW shapeC, toW filledB]
+    let
+        showOptions t = zipWithM_ Gtk.widgetSetVisible options $ case t of
+            BrushTool -> [True, False, False, False, False]
+            ScatterTool -> [False, True, False, False, False]
+            EraserTool -> [False, False, True, False, False]
+            ShapeTool -> [False, False, False, True, True]
+            _ -> [False, False, False, False, False]
     -- Editor: tools over canvas over transport over timeline; the chat on the right.
     canvas <- new Gtk.DrawingArea [#canFocus := True]
     timeline <- new Gtk.DrawingArea []
@@ -243,14 +312,17 @@ runApp = do
     Gtk.boxPackEnd transport fitBtn False False 0
     Gtk.boxPackEnd transport onionBtn False False 0
     left <- Gtk.boxNew Gtk.OrientationVertical 4
+    work <- Gtk.boxNew Gtk.OrientationHorizontal 0
+    Gtk.boxPackStart work rail False False 0
+    Gtk.boxPackStart work canvas True True 0
     Gtk.boxPackStart left tools False False 0
-    Gtk.boxPackStart left canvas True True 0
+    Gtk.boxPackStart left work True True 0
     Gtk.boxPackStart left transport False False 4
     Gtk.boxPackStart left timeline False False 0
     chat <- chatPlaceholder
     paned <- Gtk.panedNew Gtk.OrientationHorizontal
     Gtk.panedPack1 paned left True False
-    Gtk.panedPack2 paned chat False True
+    Gtk.panedPack2 paned chat False False
     Gtk.panedSetPosition paned 1040
     Gtk.stackAddNamed stack home "home"
     Gtk.stackAddNamed stack paned "editor"
@@ -507,7 +579,10 @@ runApp = do
                 Right pid -> openProject pid
     -- Tools.
     let
-        pick t = modifyIORef' st (\s -> s {tool = t, draft = Nothing, selection = if t == SelectTool then s.selection else [], selDrag = Nothing}) >> Gtk.widgetQueueDraw canvas
+        pick t = do
+            modifyIORef' st (\s -> s {tool = t, draft = Nothing, selection = if t == SelectTool then s.selection else [], selDrag = Nothing})
+            showOptions t
+            Gtk.widgetQueueDraw canvas
     _ <- on selectR #toggled (pick SelectTool)
     _ <- on fillR #toggled (pick FillTool)
     _ <- on brushR #toggled (pick BrushTool)
@@ -549,115 +624,125 @@ runApp = do
         pure True
     -- Pen, mouse and touch in one place: the pen and the mouse draw (with pressure where there
     -- is any); touch, the middle button and Space-drag pan.
+    let
+        onPointer pe = do
+            s <- readIORef st
+            let
+                (x, y) = (pe.px, pe.py)
+                pressure = pe.pressure
+                button = pe.button
+                panning = pe.panning || button == 2 || s.spaceHeld
+            case pe.phase of
+                Press
+                    | panning -> writeIORef st s {drag = Just (x, y, s.panX, s.panY)} >> pure True
+                    | button == 1 -> do
+                        Gtk.widgetGrabFocus canvas
+                        stop
+                        t <- target
+                        case (t, s.tool) of
+                            (Left why, _) -> say why >> pure True
+                            (Right _, TextTool) -> do
+                                body <- askText win "Text" ""
+                                forM_ body $ \b -> celEdit (\li n p -> Make.textAt (pen s) b (max 24 (s.penSize * 6)) (toLayer s (x, y)) >>= \item -> addItemsAt li n [item] p)
+                                pure True
+                            (Right _, EraserTool) | s.objectEraser -> do
+                                eraseAt (toLayer s (x, y)) s
+                                pure True
+                            (Right (o, _, n), FillTool) -> do
+                                let
+                                    (lx, ly) = toLayer s (x, y)
+                                    items = celItems o.view s.layer n
+                                raster <- Fill.rasterOf o.env.pictures o.view.width o.view.height items
+                                case Fill.traceFill raster lx ly 4 maxPointsPerFill >>= Make.fillArea (pen s) of
+                                    Left why -> say why
+                                    Right item -> celEdit (\li m -> addItemsAt li m [item])
+                                pure True
+                            (Right (o, _, n), SelectTool) -> do
+                                let
+                                    p@(lx, ly) = toLayer s (x, y)
+                                    items = celItems o.view s.layer n
+                                    chosen = [it | (i, it) <- zip [0 ..] items, i `elem` s.selection]
+                                    pad = 12 / s.magnify
+                                    nearP (ax, ay) = abs (ax - lx) <= pad && abs (ay - ly) <= pad
+                                    startDrag m c = writeIORef st s {selDrag = Just SelDrag {mode = m, from = p, centre = c, current = M.identity}}
+                                case boxOf chosen of
+                                    Just bx
+                                        | any nearP [(bx.x0, bx.y0), (bx.x1, bx.y0), (bx.x1, bx.y1), (bx.x0, bx.y1)] -> startDrag Scaling (middle bx)
+                                        | nearP ((bx.x0 + bx.x1) / 2, bx.y0 - 30 / s.magnify) -> startDrag Turning (middle bx)
+                                        | lx >= bx.x0 && lx <= bx.x1 && ly >= bx.y0 && ly <= bx.y1 -> startDrag Moving (middle bx)
+                                    _ -> case topmostAt items lx ly (6 / s.magnify) of
+                                        Just i -> do
+                                            let
+                                                sel = if s.shiftHeld then (if i `elem` s.selection then filter (/= i) s.selection else i : s.selection) else [i]
+                                                box = boxOf [it | (j, it) <- zip [0 ..] items, j `elem` sel]
+                                            writeIORef st s {selection = sel, selDrag = fmap (\bx -> SelDrag {mode = Moving, from = p, centre = middle bx, current = M.identity}) box}
+                                        Nothing -> writeIORef st s {selection = []}
+                                Gtk.widgetQueueDraw canvas
+                                pure True
+                            (Right _, _) -> do
+                                let
+                                    (lx, ly) = toLayer s (x, y)
+                                writeIORef st s {draft = Just Draft {pts = [(lx, ly, pressure)], start = (lx, ly), seed = Make.seedFrom lx ly (length s.past)}}
+                                Gtk.widgetQueueDraw canvas
+                                pure True
+                    | otherwise -> pure False
+                Move -> do
+                    case (s.drag, s.draft) of
+                        (Just (x0, y0, px, py), _) -> writeIORef st s {panX = px + x - x0, panY = py + y - y0} >> Gtk.widgetQueueDraw canvas
+                        _ | Just sd <- s.selDrag -> do
+                            let
+                                (lx, ly) = toLayer s (x, y)
+                                (fx, fy) = sd.from
+                                (cx, cy) = sd.centre
+                                about (M.Matrix a b c d e f) = M.Matrix a b c d (e + cx - a * cx - c * cy) (f + cy - b * cx - d * cy)
+                                m' = case sd.mode of
+                                    Moving -> M.translate (lx - fx) (ly - fy) M.identity
+                                    Scaling ->
+                                        let
+                                            k = sqrt ((lx - cx) ** 2 + (ly - cy) ** 2) / max 1.0e-6 (sqrt ((fx - cx) ** 2 + (fy - cy) ** 2))
+                                        in
+                                            about (M.scale k k M.identity)
+                                    Turning ->
+                                        let
+                                            a0 = atan2 (ly - cy) (lx - cx) - atan2 (fy - cy) (fx - cx)
+                                            a = if s.shiftHeld then fromIntegral (round (a0 / (pi / 12)) :: Int) * (pi / 12) else a0
+                                        in
+                                            about (M.rotate a M.identity)
+                            writeIORef st s {selDrag = Just sd {current = m'}}
+                            Gtk.widgetQueueDraw canvas
+                        (_, Just d) -> do
+                            let
+                                (lx, ly) = toLayer s (x, y)
+                            writeIORef st s {draft = Just d {pts = d.pts <> [(lx, ly, pressure)]}}
+                            Gtk.widgetQueueDraw canvas
+                        _ -> when (s.tool == EraserTool && s.objectEraser) $ do
+                            -- The object eraser rubs out what it passes over while pressed.
+                            when pe.held (eraseAt (toLayer s (x, y)) s)
+                    pure True
+                Release -> do
+                    writeIORef st s {drag = Nothing, draft = Nothing, selDrag = Nothing}
+                    forM_ s.selDrag $ \sd -> unless (sd.current == M.identity || null s.selection) $ do
+                        let
+                            M.Matrix a b c d e f = sd.current
+                        celEdit (\li n -> transformItemsAt li n s.selection (a, b, c, d, e, f))
+                    forM_ s.draft $ \d -> forM_ (finish s d) $ \case
+                        Left why -> say why
+                        Right item -> celEdit (\li n -> addItemsAt li n [item])
+                    Gtk.widgetQueueDraw canvas
+                    pure True
     _ <- on canvas #event $ \ev -> do
         kind <- Gdk.eventGetEventType ev
         (_, x, y) <- Gdk.eventGetCoords ev
         (hasP, pr) <- Gdk.eventGetAxis ev Gdk.AxisUsePressure
         (_, button) <- Gdk.eventGetButton ev
         src <- Gdk.eventGetSourceDevice ev >>= maybe (pure Gdk.InputSourceMouse) Gdk.deviceGetSource
-        s <- readIORef st
+        (_, mods) <- Gdk.eventGetState (Just ev)
         let
-            pressure = if hasP && pr > 0 then pr else 0.5
-            panning = button == 2 || s.spaceHeld || src == Gdk.InputSourceTouchscreen
+            send ph = onPointer Pointer {phase = ph, px = x, py = y, pressure = if hasP && pr > 0 then pr else 0.5, button = fromIntegral button, panning = src == Gdk.InputSourceTouchscreen, held = Gdk.ModifierTypeButton1Mask `elem` mods}
         case kind of
-            Gdk.EventTypeButtonPress
-                | panning -> writeIORef st s {drag = Just (x, y, s.panX, s.panY)} >> pure True
-                | button == 1 -> do
-                    Gtk.widgetGrabFocus canvas
-                    stop
-                    t <- target
-                    case (t, s.tool) of
-                        (Left why, _) -> say why >> pure True
-                        (Right _, TextTool) -> do
-                            body <- askText win "Text" ""
-                            forM_ body $ \b -> celEdit (\li n p -> Make.textAt (pen s) b (max 24 (s.penSize * 6)) (toLayer s (x, y)) >>= \item -> addItemsAt li n [item] p)
-                            pure True
-                        (Right _, EraserTool) | s.objectEraser -> do
-                            eraseAt (toLayer s (x, y)) s
-                            pure True
-                        (Right (o, _, n), FillTool) -> do
-                            let
-                                (lx, ly) = toLayer s (x, y)
-                                items = celItems o.view s.layer n
-                            raster <- Fill.rasterOf o.env.pictures o.view.width o.view.height items
-                            case Fill.traceFill raster lx ly 4 maxPointsPerFill >>= Make.fillArea (pen s) of
-                                Left why -> say why
-                                Right item -> celEdit (\li m -> addItemsAt li m [item])
-                            pure True
-                        (Right (o, _, n), SelectTool) -> do
-                            let
-                                p@(lx, ly) = toLayer s (x, y)
-                                items = celItems o.view s.layer n
-                                chosen = [it | (i, it) <- zip [0 ..] items, i `elem` s.selection]
-                                pad = 12 / s.magnify
-                                nearP (ax, ay) = abs (ax - lx) <= pad && abs (ay - ly) <= pad
-                                startDrag m c = writeIORef st s {selDrag = Just SelDrag {mode = m, from = p, centre = c, current = M.identity}}
-                            case boxOf chosen of
-                                Just bx
-                                    | any nearP [(bx.x0, bx.y0), (bx.x1, bx.y0), (bx.x1, bx.y1), (bx.x0, bx.y1)] -> startDrag Scaling (middle bx)
-                                    | nearP ((bx.x0 + bx.x1) / 2, bx.y0 - 30 / s.magnify) -> startDrag Turning (middle bx)
-                                    | lx >= bx.x0 && lx <= bx.x1 && ly >= bx.y0 && ly <= bx.y1 -> startDrag Moving (middle bx)
-                                _ -> case topmostAt items lx ly (6 / s.magnify) of
-                                    Just i -> do
-                                        let
-                                            sel = if s.shiftHeld then (if i `elem` s.selection then filter (/= i) s.selection else i : s.selection) else [i]
-                                            box = boxOf [it | (j, it) <- zip [0 ..] items, j `elem` sel]
-                                        writeIORef st s {selection = sel, selDrag = fmap (\bx -> SelDrag {mode = Moving, from = p, centre = middle bx, current = M.identity}) box}
-                                    Nothing -> writeIORef st s {selection = []}
-                            Gtk.widgetQueueDraw canvas
-                            pure True
-                        (Right _, _) -> do
-                            let
-                                (lx, ly) = toLayer s (x, y)
-                            writeIORef st s {draft = Just Draft {pts = [(lx, ly, pressure)], start = (lx, ly), seed = Make.seedFrom lx ly (length s.past)}}
-                            Gtk.widgetQueueDraw canvas
-                            pure True
-                | otherwise -> pure False
-            Gdk.EventTypeMotionNotify -> do
-                case (s.drag, s.draft) of
-                    (Just (x0, y0, px, py), _) -> writeIORef st s {panX = px + x - x0, panY = py + y - y0} >> Gtk.widgetQueueDraw canvas
-                    _ | Just sd <- s.selDrag -> do
-                        let
-                            (lx, ly) = toLayer s (x, y)
-                            (fx, fy) = sd.from
-                            (cx, cy) = sd.centre
-                            about (M.Matrix a b c d e f) = M.Matrix a b c d (e + cx - a * cx - c * cy) (f + cy - b * cx - d * cy)
-                            m' = case sd.mode of
-                                Moving -> M.translate (lx - fx) (ly - fy) M.identity
-                                Scaling ->
-                                    let
-                                        k = sqrt ((lx - cx) ** 2 + (ly - cy) ** 2) / max 1.0e-6 (sqrt ((fx - cx) ** 2 + (fy - cy) ** 2))
-                                    in
-                                        about (M.scale k k M.identity)
-                                Turning ->
-                                    let
-                                        a0 = atan2 (ly - cy) (lx - cx) - atan2 (fy - cy) (fx - cx)
-                                        a = if s.shiftHeld then fromIntegral (round (a0 / (pi / 12)) :: Int) * (pi / 12) else a0
-                                    in
-                                        about (M.rotate a M.identity)
-                        writeIORef st s {selDrag = Just sd {current = m'}}
-                        Gtk.widgetQueueDraw canvas
-                    (_, Just d) -> do
-                        let
-                            (lx, ly) = toLayer s (x, y)
-                        writeIORef st s {draft = Just d {pts = d.pts <> [(lx, ly, pressure)]}}
-                        Gtk.widgetQueueDraw canvas
-                    _ -> when (s.tool == EraserTool && s.objectEraser) $ do
-                        -- The object eraser rubs out what it passes over while pressed.
-                        (_, m) <- Gdk.eventGetState (Just ev)
-                        when (Gdk.ModifierTypeButton1Mask `elem` m) (eraseAt (toLayer s (x, y)) s)
-                pure True
-            Gdk.EventTypeButtonRelease -> do
-                writeIORef st s {drag = Nothing, draft = Nothing, selDrag = Nothing}
-                forM_ s.selDrag $ \sd -> unless (sd.current == M.identity || null s.selection) $ do
-                    let
-                        M.Matrix a b c d e f = sd.current
-                    celEdit (\li n -> transformItemsAt li n s.selection (a, b, c, d, e, f))
-                forM_ s.draft $ \d -> forM_ (finish s d) $ \case
-                    Left why -> say why
-                    Right item -> celEdit (\li n -> addItemsAt li n [item])
-                Gtk.widgetQueueDraw canvas
-                pure True
+            Gdk.EventTypeButtonPress -> send Press
+            Gdk.EventTypeMotionNotify -> send Move
+            Gdk.EventTypeButtonRelease -> send Release
             _ -> pure False
     -- Scrolling: a mouse wheel zooms about the pointer; a trackpad pans, and zooms with Ctrl or ⌘.
     _ <- on canvas #scrollEvent $ \ev -> do
@@ -711,80 +796,90 @@ runApp = do
         Gtk.widgetQueueDraw timeline
         pure True
     -- Keys, as in the browser: tools, frames, drawings, undo.
+    let
+        onKey name cmd shift = do
+            s <- readIORef st
+            if isNothing s.open
+                then pure False
+                else do
+                    case (cmd, Text.toLower name) of
+                        (True, "z") -> (if shift then redo else undo) >> pure True
+                        (False, "v") -> Gtk.toggleButtonSetActive selectR True >> pure True
+                        (False, "k") -> Gtk.toggleButtonSetActive fillR True >> pure True
+                        (False, "escape") -> writeIORef st s {selection = []} >> Gtk.widgetQueueDraw canvas >> pure True
+                        (False, n)
+                            | n `elem` ["delete", "backspace"]
+                            , not (null s.selection) -> do
+                                writeIORef st s {selection = []}
+                                celEdit (\li m p -> foldr (\k acc -> acc >>= removeItemAt li m k) (Right p) (sortDesc s.selection))
+                                pure True
+                        (True, "a") -> do
+                            t <- target
+                            forM_ t $ \(o, _, n) -> do
+                                writeIORef st s {selection = [i | (i, it) <- zip [0 ..] (celItems o.view s.layer n), not (isEraser it)]}
+                                Gtk.toggleButtonSetActive selectR True
+                                Gtk.widgetQueueDraw canvas
+                            pure True
+                        (False, "b") -> Gtk.toggleButtonSetActive brushR True >> pure True
+                        (False, "g") -> Gtk.toggleButtonSetActive scatterR True >> pure True
+                        (False, "e") -> Gtk.toggleButtonSetActive eraserR True >> pure True
+                        (False, "u") -> Gtk.toggleButtonSetActive shapeR True >> pure True
+                        (False, "t") -> Gtk.toggleButtonSetActive textR True >> pure True
+                        (False, "o") -> Gtk.toggleButtonSetActive onionBtn (not s.onion) >> pure True
+                        (False, "n") -> Gtk.buttonClicked newCelB >> pure True
+                        (False, "d") -> Gtk.buttonClicked dupCelB >> pure True
+                        (False, "left") -> stop >> step (-1) >> pure True
+                        (False, "right") -> stop >> step 1 >> pure True
+                        (False, "bracketleft") -> Gtk.rangeSetValue sizeS (max 0.5 (s.penSize / 1.25)) >> pure True
+                        (False, "bracketright") -> Gtk.rangeSetValue sizeS (min 200 (s.penSize * 1.25)) >> pure True
+                        (False, "0") -> Gtk.buttonClicked fitBtn >> pure True
+                        (False, "shift_l") -> writeIORef st s {shiftHeld = True} >> pure False
+                        (False, "shift_r") -> writeIORef st s {shiftHeld = True} >> pure False
+                        (False, "space") -> do
+                            -- Space plays; held while dragging, it pans.
+                            writeIORef st s {spaceHeld = True}
+                            pure True
+                        _ -> pure False
+        onKeyUp name = do
+            s <- readIORef st
+            case Text.toLower name of
+                "space" -> do
+                    writeIORef st s {spaceHeld = False}
+                    when (isNothing s.drag) play
+                    pure True
+                n | n `elem` ["shift_l", "shift_r"] -> writeIORef st s {shiftHeld = False} >> pure False
+                _ -> pure False
     _ <- on win #keyPressEvent $ \ev -> do
         kv <- get ev #keyval
         mods <- get ev #state
         name <- fromMaybe "" <$> Gdk.keyvalName kv
-        let
-            cmd = any (`elem` mods) [Gdk.ModifierTypeControlMask, Gdk.ModifierTypeMetaMask, Gdk.ModifierTypeSuperMask]
-            shift = Gdk.ModifierTypeShiftMask `elem` mods
-        s <- readIORef st
-        if isNothing s.open
-            then pure False
-            else do
-                case (cmd, Text.toLower name) of
-                    (True, "z") -> (if shift then redo else undo) >> pure True
-                    (False, "v") -> Gtk.toggleButtonSetActive selectR True >> pure True
-                    (False, "k") -> Gtk.toggleButtonSetActive fillR True >> pure True
-                    (False, "escape") -> writeIORef st s {selection = []} >> Gtk.widgetQueueDraw canvas >> pure True
-                    (False, n)
-                        | n `elem` ["delete", "backspace"]
-                        , not (null s.selection) -> do
-                            writeIORef st s {selection = []}
-                            celEdit (\li m p -> foldr (\k acc -> acc >>= removeItemAt li m k) (Right p) (sortDesc s.selection))
-                            pure True
-                    (True, "a") -> do
-                        t <- target
-                        forM_ t $ \(o, _, n) -> do
-                            writeIORef st s {selection = [i | (i, it) <- zip [0 ..] (celItems o.view s.layer n), not (isEraser it)]}
-                            Gtk.toggleButtonSetActive selectR True
-                            Gtk.widgetQueueDraw canvas
-                        pure True
-                    (False, "b") -> Gtk.toggleButtonSetActive brushR True >> pure True
-                    (False, "g") -> Gtk.toggleButtonSetActive scatterR True >> pure True
-                    (False, "e") -> Gtk.toggleButtonSetActive eraserR True >> pure True
-                    (False, "u") -> Gtk.toggleButtonSetActive shapeR True >> pure True
-                    (False, "t") -> Gtk.toggleButtonSetActive textR True >> pure True
-                    (False, "o") -> Gtk.toggleButtonSetActive onionBtn (not s.onion) >> pure True
-                    (False, "n") -> Gtk.buttonClicked newCelB >> pure True
-                    (False, "d") -> Gtk.buttonClicked dupCelB >> pure True
-                    (False, "left") -> stop >> step (-1) >> pure True
-                    (False, "right") -> stop >> step 1 >> pure True
-                    (False, "bracketleft") -> Gtk.rangeSetValue sizeS (max 0.5 (s.penSize / 1.25)) >> pure True
-                    (False, "bracketright") -> Gtk.rangeSetValue sizeS (min 200 (s.penSize * 1.25)) >> pure True
-                    (False, "0") -> Gtk.buttonClicked fitBtn >> pure True
-                    (False, "shift_l") -> writeIORef st s {shiftHeld = True} >> pure False
-                    (False, "shift_r") -> writeIORef st s {shiftHeld = True} >> pure False
-                    (False, "space") -> do
-                        -- Space plays; held while dragging, it pans.
-                        writeIORef st s {spaceHeld = True}
-                        pure True
-                    _ -> pure False
+        onKey name (any (`elem` mods) [Gdk.ModifierTypeControlMask, Gdk.ModifierTypeMetaMask, Gdk.ModifierTypeSuperMask]) (Gdk.ModifierTypeShiftMask `elem` mods)
     _ <- on win #keyReleaseEvent $ \ev -> do
         kv <- get ev #keyval
         name <- fromMaybe "" <$> Gdk.keyvalName kv
-        s <- readIORef st
-        case Text.toLower name of
-            "space" -> do
-                writeIORef st s {spaceHeld = False}
-                when (isNothing s.drag) play
-                pure True
-            n | n `elem` ["shift_l", "shift_r"] -> writeIORef st s {shiftHeld = False} >> pure False
-            _ -> pure False
+        onKeyUp name
     _ <- on win #focusOutEvent $ \_ -> modifyIORef' st (\s -> s {spaceHeld = False, shiftHeld = False}) >> pure False
     Gtk.widgetShowAll win
-    -- First run asks where projects live; after that the choice is remembered.
-    saved <- loadConnection
-    c <- case saved of
-        Just c -> pure (Just c)
-        Nothing -> do
-            r <- connectionDialog win Nothing
-            forM_ r saveConnection
-            pure r
-    case c of
-        Just conn -> connect conn
-        Nothing -> Gtk.labelSetText status "Choose where projects live with Connection…"
-    Gtk.main
+    showOptions BrushTool
+    let
+        probe = do
+            s <- readIORef st
+            msg <- Gtk.labelGetText saveState
+            pure
+                Probe
+                    { edited = (.project) <$> s.open
+                    , toolName = Text.toLower (Text.pack (takeWhile (/= 'T') (show s.tool)))
+                    , chosen = s.selection
+                    , undoSteps = length s.past
+                    , unsaved = s.dirty
+                    , note = msg
+                    , onLayer = s.layer
+                    , atFrame = s.playhead
+                    , screenOf = \(cx, cy) -> (s.panX + cx * s.magnify, s.panY + cy * s.magnify)
+                    }
+        buttons = [("+ Drawing", newCelB), ("Duplicate", dupCelB), ("Delete drawing", delCelB), ("Hold +", moreB), ("Hold −", lessB), ("+ Layer", addLayerB), ("Hide layer", hideB), ("Lock layer", lockB), ("Delete layer", delLayerB), ("Undo", undoBtn), ("Redo", redoBtn), ("Play", playBtn), ("◀", prevBtn), ("▶", nextBtn), ("Fit", fitBtn)]
+        clickNamed n = forM_ (lookup n buttons) Gtk.buttonClicked
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
