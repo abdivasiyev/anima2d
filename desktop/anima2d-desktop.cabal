@@ -5,6 +5,7 @@ synopsis:           The anima2D editor as a native GTK3 application
 license:            Apache-2.0
 category:           Graphics
 build-type:         Simple
+extra-source-files: test/freehand-cases.json
 
 common warnings
     ghc-options:
@@ -32,6 +33,9 @@ library
                     , Anima.Desktop.Backend
                     , Anima.Desktop.Config
                     , Anima.Desktop.Ui
+                    , Anima.Desktop.Make
+                    , Anima.Desktop.Fill
+                    , Anima.Desktop.Geometry
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d
@@ -49,6 +53,7 @@ library
                     , http-client
                     , http-client-tls
                     , http-types
+                    , vector
                     , gi-cairo-render
                     , gi-pango
                     , gi-pangocairo
@@ -66,3 +71,16 @@ executable anima2d-desktop
                     , aeson
                     , bytestring
                     , containers
+
+test-suite spec
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    build-depends:    base >=4.20 && <5
+                    , aeson
+                    , anima2d
+                    , anima2d-desktop
+                    , bytestring
+                    , containers
+                    , text

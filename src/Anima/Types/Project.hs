@@ -38,6 +38,7 @@ module Anima.Types.Project
     , LightView (..)
     , CameraKeyView (..)
     , viewProject
+    , viewItem
     , Plane (..)
     , Brush (..)
     , Scatter (..)
@@ -78,6 +79,11 @@ module Anima.Types.Project
     , replaceItemsAt
     , insertDrawing
     , addLayer
+    , removeDrawing
+    , transformItemsAt
+    , removeItemAt
+    , setHoldAt
+    , removeLayerAt
     , addLightLayer
     , pickAnyLayer
     , setCamera
@@ -98,6 +104,7 @@ module Anima.Types.Project
     , maxFrames
     , maxItemsPerFrame
     , maxPointsPerItem
+    , maxPointsPerFill
     )
 where
 
@@ -1384,10 +1391,13 @@ restyleLayer li o p = do
     b <- given "blend" blendFrom lk.blend
     c <- given "clip" boolFrom lk.clip
     m <- given "motion" motionFrom lk.motion
+    vis <- given "visible" boolFrom lk.visible
+    lock <- given "locked" boolFrom lk.locked
+    op <- given "opacity" opacityFrom lk.opacity
     d <- given "depth" depthFrom lk.depth
     e <- given "effects" effectsFrom lk.effects
     let
-        lk' = lk {blend = b, clip = c, motion = m, depth = d, effects = e}
+        lk' = lk {blend = b, clip = c, motion = m, depth = d, effects = e, visible = vis, locked = lock, opacity = op}
     l' <- case l of
         DrawingLayer _ holdLast cels rig -> Right (DrawingLayer lk' holdLast cels rig)
         ReferenceLayer _ a media -> Right (ReferenceLayer lk' a media)
@@ -1533,6 +1543,91 @@ insertDrawing li after copy holdFor p
                     Right (before <> [source] <> rest)
             )
             p
+
+-- | Item @k@ (from 0) of drawing @n@ (from 1) taken out (the object eraser).
+removeItemAt :: Int -> Int -> Int -> Project -> Either Text Project
+removeItemAt li n k = onDrawing li n (\xs -> [x | (i, x) <- zip [0 ..] xs, i /= k])
+
+{- | Items @ks@ (from 0) of drawing @n@ (from 1) moved, scaled, turned or mirrored by the
+similarity @(a, b, c, d, e, f)@ (x' = a x + c y + e, y' = b x + d y + f), as the editors'
+selection does: on the wire form, then parsed again, so a result out of range is refused.
+Line widths and text sizes scale with it; text never mirrors, a picture flips.
+-}
+transformItemsAt :: Int -> Int -> [Int] -> (Double, Double, Double, Double, Double, Double) -> Project -> Either Text Project
+transformItemsAt li n ks m p = case drop (n - 1) (celsOf li p) of
+    (Cel _ _ items _ : _) | n >= 1 -> do
+        moved <- sequence [if i `elem` ks then at (tshow i) (parse (transformItemValue m (unparse it))) else Right it | (i, it) <- zip [0 :: Int ..] items]
+        onDrawing li n (const moved) p
+    _ -> Left ("expected a drawing from 1 to " <> tshow (length (celsOf li p)))
+
+transformItemValue :: (Double, Double, Double, Double, Double, Double) -> Value -> Value
+transformItemValue (a, b, c, d, e, f) = \case
+    Object o ->
+        let
+            kind = KeyMap.lookup "kind" o
+            det = a * d - b * c
+            k = sqrt (abs det)
+            point = \case
+                Array xs
+                    | (Number x : Number y : rest) <- Vector.toList xs ->
+                        let
+                            (x0, y0) = (toRealFloat x, toRealFloat y)
+                        in
+                            list (number (a * x0 + c * y0 + e) : number (b * x0 + d * y0 + f) : rest)
+                v -> v
+            points = \case
+                Array xs -> Array (fmap point xs)
+                v -> v
+            polygons = \case
+                Array xs -> Array (fmap points xs)
+                v -> v
+            scaled lo hi = \case
+                Number x -> number (max lo (min hi (toRealFloat x * k)))
+                v -> v
+            turned = \case
+                Number r0 ->
+                    let
+                        r = toRealFloat r0 :: Double
+                        ux = a * cos r + c * sin r
+                        uy = b * cos r + d * sin r
+                        t = if det < 0 then atan2 (-uy) (-ux) else atan2 uy ux
+                    in
+                        number (atan2 (sin t) (cos t))
+                v -> v
+            change key g m0 = maybe m0 (\v -> KeyMap.insert (Key.fromText key) (g v) m0) (KeyMap.lookup (Key.fromText key) m0)
+            isText = kind == Just (String "text")
+            o' =
+                change "points" points
+                    . change "center" point
+                    . change "polygons" polygons
+                    . change "size" (if isText then scaled 4 2000 else scaled 0.5 200)
+                    . change "width" (scaled 0 200000)
+                    . change "height" (scaled 0 200000)
+                    . change "rotation" turned
+                    . change "flip" (\case Bool x | det < 0 -> Bool (not x); v -> v)
+                    $ o
+        in
+            Object o'
+    v -> v
+
+-- | Drawing @n@ (from 1) taken out; a layer keeps at least one.
+removeDrawing :: Int -> Int -> Project -> Either Text Project
+removeDrawing li n p
+    | n < 1 || n > length (celsOf li p) = Left ("expected a drawing from 1 to " <> tshow (length (celsOf li p)))
+    | length (celsOf li p) == 1 = Left "a layer keeps at least one drawing"
+    | otherwise = onLayerCels li (\cels -> Right [c | (i, c) <- zip [1 ..] (NonEmpty.toList cels), i /= n]) p
+
+-- | Drawing @n@ (from 1) held for @frames@ (1 to 24).
+setHoldAt :: Int -> Int -> Int -> Project -> Either Text Project
+setHoldAt li n frames p = do
+    h <- at "hold" (holdFrom (Number (fromIntegral frames)))
+    onLayerCels li (\cels -> Right [if i == n then Cel h m xs pose else c | (i, c@(Cel _ m xs pose)) <- zip [1 :: Int ..] (NonEmpty.toList cels)]) p
+
+-- | Layer @li@ taken out; a project keeps at least one drawing layer.
+removeLayerAt :: Int -> Project -> Either Text Project
+removeLayerAt li p = do
+    layers' <- nonEmpty "a project keeps at least one layer" [l | (i, l) <- zip [0 ..] (NonEmpty.toList p.layers), i /= li]
+    checked p {layers = layers'}
 
 -- | A new drawing layer on top; with @background@, at the bottom and held to the end.
 addLayer :: Text -> Bool -> Project -> Either Text Project
