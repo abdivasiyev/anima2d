@@ -1604,19 +1604,20 @@ a.btn {
   cursor: grabbing;
 }
 
-/* Motion keys: blue diamonds along the bottom of a layer's lane; hollow when linear. */
+/* Motion keys: blue diamonds along the bottom of a layer's lane; hollow when linear. No
+   z-index of their own: they stack in page order over the drawings, and under the sticky
+   layer names when the timeline scrolls sideways. */
 .motion-key {
   position: absolute;
-  bottom: 3px;
-  width: 10px;
-  height: 10px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
   padding: 0;
   border: 1.5px solid var(--accent);
   border-radius: 2px;
   background: var(--accent);
   transform: rotate(45deg);
   cursor: pointer;
-  z-index: 1;
 }
 
 .motion-key.ease-linear {
