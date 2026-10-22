@@ -380,6 +380,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const onionKeys = h("input", { type: "checkbox" });
   const traceBtn = h("button", { type: "button", class: "btn small", "aria-pressed": "false" }, icon("trace"), "Shift and trace");
   const traceReset = h("button", { type: "button", class: "btn small" }, "Put back");
+  // Pinned drawings show faintly on every frame; this takes them all off at once.
+  const clearPins = h("button", { type: "button", class: "btn small", hidden: true }, icon("pin"), "Clear the light table");
   const onionPop = h(
     "div",
     { class: "popover", hidden: true },
@@ -388,6 +390,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     h("label", { class: "toggle" }, "Tint red and green", onionTint),
     h("label", { class: "toggle" }, "Keys only", onionKeys),
     h("div", { class: "row" }, traceBtn, traceReset),
+    clearPins,
   );
 
   const safeToggle = h("input", { type: "checkbox" });
@@ -584,6 +587,12 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     const p = project();
     belowCtx.clearRect(0, 0, W, H);
     aboveCtx.clearRect(0, 0, W, H);
+    // Playing, every layer comes from the cache onto one canvas (as each played frame
+    // does): a redraw now (a remote update, a zoom) must not split the edited one out.
+    if (playing) {
+      drawLayers(belowCtx, p, t, cache, { reference });
+      return;
+    }
     if (unified()) {
       const paint = (c: Ctx): void => {
         if (currentCel() !== undefined) layers.composite(c, drafts);
@@ -623,6 +632,11 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   const composite = (): void => {
     inkCtx.clearRect(0, 0, W, H);
+    if (playing) {
+      // The played frame is all on the canvas below; the edited drawing would sit on top of it.
+      guideCtx.clearRect(0, 0, W, H);
+      return;
+    }
     const l = drawing();
     const together = unified();
     inkCanvas.style.mixBlendMode = l === undefined || together ? "normal" : CSS_BLEND[l.blend];
@@ -636,7 +650,6 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       inkCtx.restore();
     }
     guideCtx.clearRect(0, 0, W, H);
-    if (playing) return;
     const px = 1 / view.scale;
     drawFrameGuides(guideCtx, px);
     if (settings.symmetry) {
@@ -730,6 +743,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   };
 
   const renderOnion = (): void => {
+    clearPins.hidden = pins.size === 0;
+    clearPins.lastChild?.replaceWith(`Clear the light table (${pins.size})`);
     onionCtx.clearRect(0, 0, W, H);
     const l = drawing();
     if (playing || onionScratchCtx === null || l === undefined) return;
@@ -2639,6 +2654,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   title.addEventListener("keydown", (e) => { if (e.key === "Enter") title.blur(); }, opts);
   zoomLabel.addEventListener("click", fitView, opts);
   traceBtn.addEventListener("click", () => { setTracing(!tracing); }, opts);
+  clearPins.addEventListener("click", () => { pins.clear(); closePopovers(); renderOnion(); renderTimeline(); say("Light table cleared"); }, opts);
   traceReset.addEventListener("click", () => { trace = [0, 0]; setTracing(false); renderOnion(); }, opts);
   guidesBtn.addEventListener("click", () => { openPopover(guidesPop, guidesBtn); }, opts);
   safeToggle.addEventListener("change", () => { updateSettings("safeAreas", safeToggle.checked); compositeSoon(); }, opts);
