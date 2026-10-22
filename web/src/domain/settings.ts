@@ -15,6 +15,14 @@ import {
   parseColor,
   parseOpacity,
   parseScatter,
+  parseFontFamily,
+  parseFontSize,
+  ALIGNS,
+  TEXT_STYLES,
+  type Align,
+  type FontFamily,
+  type FontSize,
+  type TextStyle,
   type BrushKind,
   type BrushSize,
   type Color,
@@ -22,7 +30,7 @@ import {
   type ScatterKind,
 } from "./project";
 
-export const TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill", "eyedropper", "rig"] as const;
+export const TOOLS = ["select", "transform", "brush", "scatter", "eraser", "shape", "text", "fill", "eyedropper", "rig"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 export const ERASERS = ["pixel", "object"] as const;
@@ -107,6 +115,11 @@ export interface SettingsFields {
   readonly safeAreas: boolean;
   /** A grid with the thirds marked. */
   readonly grid: boolean;
+  /** What the text tool writes with. */
+  readonly font: FontFamily;
+  readonly fontSize: FontSize;
+  readonly textStyle: TextStyle;
+  readonly textAlign: Align;
 }
 
 export const RAIL_SIDES = ["left", "right"] as const;
@@ -152,6 +165,10 @@ const DEFAULTS = {
   railTop: 0.5,
   safeAreas: false,
   grid: false,
+  font: "sans-serif",
+  fontSize: 72,
+  textStyle: "normal",
+  textAlign: "center",
 } as const;
 
 /** Each field from `raw` if it parses, else its default: settings never fail to load. */
@@ -193,6 +210,10 @@ export const parseSettings = (raw: unknown): Settings => {
     railTop: get("railTop", parseFraction),
     safeAreas: get("safeAreas", parseBool),
     grid: get("grid", parseBool),
+    font: get("font", parseFontFamily),
+    fontSize: get("fontSize", parseFontSize),
+    textStyle: get("textStyle", oneOf(TEXT_STYLES, "expected a text style")),
+    textAlign: get("textAlign", oneOf(ALIGNS, "expected an alignment")),
   });
 };
 
@@ -207,6 +228,8 @@ export const sizeKey = (s: Settings): "size" | "scatterSize" | "eraserSize" | "s
       return "shapeSize";
     case "brush":
     case "select":
+    case "transform":
+    case "text":
     case "fill":
     case "eyedropper":
     case "rig":

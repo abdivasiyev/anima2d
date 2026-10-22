@@ -68,7 +68,7 @@ export const GENERIC_FONTS = ["sans-serif", "serif", "monospace", "cursive", "sy
 
 const STYLE_CSS: Record<TextFields["style"], string> = { normal: "", bold: "bold ", italic: "italic ", "bold-italic": "italic bold " };
 
-export const fontCss = (t: Pick<TextFields, "font" | "style" | "size">): string => {
+export const fontCss = (t: Pick<TextFields, "font" | "style"> & { readonly size: number }): string => {
   const generic = GENERIC_FONTS.some((g) => g === t.font);
   return `${STYLE_CSS[t.style]}${t.size}px ${generic ? t.font : `"${t.font}", sans-serif`}`;
 };

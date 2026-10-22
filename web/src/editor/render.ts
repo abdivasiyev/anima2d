@@ -385,7 +385,9 @@ export const drawItem = (ctx: Ctx, item: ItemFields, opts: DrawOptions = {}): vo
       ctx.translate(item.center[0], item.center[1]);
       ctx.rotate(item.rotation);
       if (item.flip) ctx.scale(-1, 1);
-      ctx.drawImage(image, -item.width / 2, -item.height / 2, item.width, item.height);
+      const w: number = item.width;
+      const hh: number = item.height;
+      ctx.drawImage(image, -w / 2, -hh / 2, w, hh);
       break;
     }
   }

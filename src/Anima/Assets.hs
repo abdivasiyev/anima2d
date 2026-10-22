@@ -31,8 +31,9 @@ import Anima.Types.Project (AssetId)
 maxBytes :: Int
 maxBytes = 512 * 1024 * 1024
 
+-- | Pictures, video, sound, and font files (the editor names a font's type by its extension).
 allowed :: BS.ByteString -> Bool
-allowed t = any (`BS.isPrefixOf` t) ["image/", "video/", "audio/"]
+allowed t = any (`BS.isPrefixOf` t) ["image/", "video/", "audio/", "font/"]
 
 {- | @POST /api/assets@ (the body is the file, its type in Content-Type) answers @{"id"}@;
 @GET /api/assets/<id>@ serves it back.
@@ -47,7 +48,7 @@ assetsApp dataDir newId req respond = do
             let
                 ctype = maybe "" (BS8.takeWhile (/= ';')) (lookup "Content-Type" (Wai.requestHeaders req))
             if not (allowed ctype)
-                then respond (plain Http.status415 "expected an image, a video or audio")
+                then respond (plain Http.status415 "expected an image, a video, audio or a font")
                 else do
                     raw <- newId
                     case parse @AssetId raw of

@@ -36,6 +36,7 @@ export interface TimelineEvents {
   /** The menu for the selected cel, at a screen position. */
   celMenu(x: number, y: number): void;
   cameraKeyMenu(frame: number, x: number, y: number): void;
+  motionKeyMenu(layer: number, frame: number, x: number, y: number): void;
   audioMenu(track: number, x: number, y: number): void;
   thumbnail(cel: Cel, w: number, h: number): OffscreenCanvas;
   peaks(asset: string): Float32Array | undefined;
@@ -182,6 +183,21 @@ export class Timeline {
         const band = h("div", { class: "ref-band" }, layer.media === "video" ? "Reference video" : "Reference image");
         band.style.width = `${width}px`;
         lane.append(band);
+      }
+      // The layer's motion keys, as diamonds along the bottom of its lane.
+      for (const k of layer.motion?.keys ?? []) {
+        const d = h("button", { type: "button", class: `motion-key ease-${k.ease}`, title: `Motion key at frame ${k.frame + 1}` });
+        d.style.left = `${k.frame * this.unit + this.unit / 2 - 5}px`;
+        d.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.on.scrub(k.frame);
+        });
+        d.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.on.motionKeyMenu(i, k.frame, e.clientX, e.clientY);
+        });
+        lane.append(d);
       }
       lane.append(this.playhead(m.t));
       rows.push(h("div", { class: "tl-row" }, head, lane));

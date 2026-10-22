@@ -12,6 +12,8 @@ import {
   makeCel,
   makeItem,
   makeMotion,
+  MAX_FRAMES,
+  parseTextBody,
   makeLayer,
   makeProject,
   parseCanvas,
@@ -23,6 +25,7 @@ import {
   type CameraKey,
   type Color,
   type MotionKey,
+  type ProjectFont,
   type Vec,
   type Canvas,
   type Cel,
@@ -327,6 +330,10 @@ const recolorItem = (item: Item, swap: (c: Color) => Color): Result<Item> => {
   }
 };
 
+/** Replace the project's font files. */
+export const setFonts = (p: Project, fonts: readonly ProjectFont[]): Result<Project> =>
+  makeProject(p.id, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, fonts);
+
 export const setPalette = (p: Project, palette: readonly Color[]): Result<Project> => rebuild(p, p.layers, p.camera, p.audio, palette);
 
 /** Every item, in every drawing of every layer, drawn in `from` is drawn in `to`; the palette too. */
@@ -342,3 +349,34 @@ export const recolorAll = (p: Project, from: Color, to: Color): Result<Project> 
   });
   return andThen(layers, (ls) => rebuild(p, ls, p.camera, p.audio, [...new Set(p.palette.map(swap))]));
 };
+
+// Typewriter -----------------------------------------------------------------------------
+
+/**
+ * Type a text on: the drawing becomes a run of drawings, each `hold` frames long, that show
+ * the text item `item` a letter (or a word) further each time. Everything else in the
+ * drawing stays; the last drawing keeps the original hold, the first its mark.
+ */
+export const typewriter = (p: Project, at: Where, item: number, by: "letter" | "word", hold: Hold): Result<Project> =>
+  andThen(drawingAt(p, at.layer), (l) => {
+    const cel = l.cels[at.cel];
+    const it = cel?.items[item];
+    if (cel === undefined || it?.kind !== "text") return err("Choose a drawing with a text in it");
+    const cuts: number[] = [];
+    if (by === "letter") {
+      for (let n = 1; n <= it.text.length; n++) if (!/\s/.test(it.text[n - 1] ?? " ")) cuts.push(n);
+    } else for (const m of it.text.matchAll(/\S+/g)) cuts.push(m.index + m[0].length);
+    if (cuts.length < 2) return err("The text is too short to type on");
+    if (l.cels.length - 1 + cuts.length > MAX_FRAMES) return err(`expected 1 to ${MAX_FRAMES} cels`);
+    const cels = each(cuts, (n, k) =>
+      andThen(parseTextBody(it.text.slice(0, n)), (text) =>
+        andThen(makeItem({ ...it, text }), (shown) =>
+          makeCel(k === cuts.length - 1 ? cel.hold : hold, k === 0 ? cel.mark : "none", cel.items.map((x, i) => (i === item ? shown : x))),
+        ),
+      ),
+    );
+    return andThen(cels, (cs) => {
+      const [first, ...rest] = [...l.cels.slice(0, at.cel), ...cs, ...l.cels.slice(at.cel + 1)];
+      return first === undefined ? err("expected a drawing") : andThen(makeLayer({ ...l, cels: [first, ...rest] }), (layer) => rebuild(p, p.layers.map((x, j) => (j === at.layer ? layer : x))));
+    });
+  });

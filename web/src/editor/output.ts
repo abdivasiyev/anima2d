@@ -147,6 +147,11 @@ export class CelCache {
 
   private scratch: [OffscreenCanvas, OffscreenCanvas, OffscreenCanvas] | undefined;
 
+  /** Forget every frame (a picture or font arrived, so they would draw differently now). */
+  clear(): void {
+    this.map.clear();
+  }
+
   /** Three canvases for clipping groups (the group, its mask, one clipped layer); made on first use. */
   clipCanvases(): [OffscreenCanvas, OffscreenCanvas, OffscreenCanvas] {
     this.scratch ??= [new OffscreenCanvas(this.width, this.height), new OffscreenCanvas(this.width, this.height), new OffscreenCanvas(this.width, this.height)];

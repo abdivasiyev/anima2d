@@ -11,6 +11,13 @@ import {
   addDrawingLayer,
   addItems,
   addReferenceLayer,
+  clearMotion,
+  recolorAll,
+  removeMotionKey,
+  setFonts,
+  setMotionKey,
+  setPalette,
+  typewriter,
   clearCel,
   duplicate,
   duplicateRange,
@@ -40,8 +47,16 @@ import {
 } from "../domain/edit";
 import { parsePenSample, type PenSample } from "../domain/pen";
 import {
+  BLENDS,
   BRUSHES,
   EASES,
+  makeItem,
+  makeMotionKey,
+  makeProjectFont,
+  parseFade,
+  parseFontFamily,
+  parseFontSize,
+  type Blend,
   FPS_VALUES,
   MAX_TIMELINE_FRAME,
   SCATTERS,
@@ -107,6 +122,7 @@ import {
 } from "../domain/settings";
 import { FILL_RASTER, rasterFromAlpha, type Raster } from "../editor/fill";
 import { apply, invert, type XY } from "../editor/geometry";
+import { GENERIC_FONTS, fontCss, forgetLayouts, mediaChanged, onMediaReady, setImageLoader } from "../editor/media";
 import { History } from "../editor/history";
 import { CSS_BLEND, CelCache, cameraAt, drawLayers, drawOutput, placementAt, type Placement } from "../editor/output";
 import { LayeredFrame, drawThumbnail, type Ctx } from "../editor/render";
@@ -124,7 +140,9 @@ import {
 } from "../editor/tools";
 import { alongPath, inbetween, inbetweenPoses } from "../editor/tween";
 import { bake, bindNearest, moveRoot, pointBone, posedBones, reachWith, restPose } from "../editor/rig";
-import { clampScale, cssTransform, fit, pinch, snapRotation, toCanvas, type View } from "../editor/view";
+import { clampScale, cssTransform, fit, pinch, snapRotation, toCanvas, toScreen, type View } from "../editor/view";
+import { textTool, type AskText } from "./text";
+import { transformTool } from "./transform";
 import { ProjectSync, type Opened, type SyncState } from "../sync";
 import { AudioEngine } from "./audio";
 import { openExport } from "./export";
@@ -151,7 +169,7 @@ const SHAPE_LABELS: Record<(typeof SHAPE_TOOLS)[number], string> = { line: "Line
 const ERASER_LABELS: Record<(typeof ERASERS)[number], string> = { pixel: "Pixel eraser", object: "Object eraser" };
 const GAP_LABELS: Record<(typeof GAPS)[number], string> = { 0: "No gap closing", 4: "Close small gaps", 10: "Close medium gaps", 20: "Close large gaps" };
 
-const TOOL_KEYS: Record<string, Tool> = { v: "select", b: "brush", g: "scatter", e: "eraser", u: "shape", k: "fill", i: "eyedropper", r: "rig" };
+const TOOL_KEYS: Record<string, Tool> = { v: "select", q: "transform", t: "text", b: "brush", g: "scatter", e: "eraser", u: "shape", k: "fill", i: "eyedropper", r: "rig" };
 
 const loadSettings = (): Settings => {
   try {
@@ -228,6 +246,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   let view: View = { tx: 0, ty: 0, scale: 1, rotation: 0 };
   let playing = false;
   let shiftHeld = false;
+  // Shift and trace: the onion skins slid over (canvas pixels) to trace a part in a new place.
+  let trace: XY = [0, 0];
+  let tracing = false;
   let spaceHeld = false;
 
   const W = initial.canvas.width;
@@ -251,6 +272,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const saveState = h("span", { class: "save-state", "data-state": "saved" }, SAVE_LABELS.saved);
   const zoomLabel = h("button", { type: "button", class: "btn zoom hide-narrow", title: "Fit to screen (0)" }, "100%");
   const symmetryBtn = iconButton("symmetry", "Mirror symmetry", "M");
+  const guidesBtn = iconButton("grid", "Guides: safe areas and grid");
   const undoBtn = iconButton("undo", "Undo", "⌘Z");
   const redoBtn = iconButton("redo", "Redo", "⇧⌘Z");
   const fsBtn = iconButton("fullscreen", "Fullscreen", "F");
@@ -264,6 +286,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     saveState,
     h("div", { class: "spacer" }),
     zoomLabel,
+    guidesBtn,
     symmetryBtn,
     h("div", { class: "sep" }),
     undoBtn,
@@ -276,6 +299,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   // Tool rail.
   const toolButtons: Record<Exclude<Tool, "eyedropper">, HTMLButtonElement> = {
     select: iconButton("select", "Select and move", "V"),
+    transform: iconButton("transform", "Transform the layer (keyframes)", "Q"),
+    text: iconButton("text", "Text", "T"),
     brush: iconButton("pen", "Brush", "B"),
     scatter: iconButton("grass", "Scatter brush", "G"),
     eraser: iconButton("eraser", "Eraser", "E"),
@@ -296,10 +321,12 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     { class: "rail" },
     railGrip,
     toolButtons.select,
+    toolButtons.transform,
     toolButtons.brush,
     toolButtons.scatter,
     toolButtons.eraser,
     toolButtons.shape,
+    toolButtons.text,
     toolButtons.fill,
     toolButtons.rig,
     h("div", { class: "rule" }),
@@ -324,10 +351,18 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const opacityRange = h("input", { type: "range", min: 0.05, max: 1, step: 0.05, "aria-label": "Opacity" });
   const opacityValue = h("span", { class: "range-value" });
   const pickBtn = h("button", { type: "button", class: "btn small" }, icon("eyedropper"), "Pick from canvas");
+  // The project's own colours, kept with it (below the house palette).
+  const projectSwatches = h("div", { class: "palette project", role: "group", "aria-label": "Project colours" });
+  const addSwatch = h("button", { type: "button", class: "add-swatch", "aria-label": "Add this colour to the project", title: "Add the current colour to the project" }, icon("add"));
+  addSwatch.addEventListener("click", () => {
+    if (!project().palette.includes(settings.color)) edit(setPalette(project(), [...project().palette, settings.color]));
+  });
   const colorPop = h(
     "div",
     { class: "popover", hidden: true },
     h("div", { class: "palette", role: "radiogroup" }, ...paletteButtons),
+    h("div", { class: "pop-heading" }, "This project"),
+    projectSwatches,
     h("label", {}, "Custom", colorInput),
     h("label", {}, "Opacity", h("span", { class: "range-row" }, opacityRange, opacityValue)),
     pickBtn,
@@ -343,6 +378,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const afterRange = h("input", { type: "range", min: 0, max: 5, step: 1, "aria-label": "Drawings after" });
   const onionTint = h("input", { type: "checkbox" });
   const onionKeys = h("input", { type: "checkbox" });
+  const traceBtn = h("button", { type: "button", class: "btn small", "aria-pressed": "false" }, icon("trace"), "Shift and trace");
+  const traceReset = h("button", { type: "button", class: "btn small" }, "Put back");
   const onionPop = h(
     "div",
     { class: "popover", hidden: true },
@@ -350,6 +387,17 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     h("label", {}, "After", afterRange),
     h("label", { class: "toggle" }, "Tint red and green", onionTint),
     h("label", { class: "toggle" }, "Keys only", onionKeys),
+    h("div", { class: "row" }, traceBtn, traceReset),
+  );
+
+  const safeToggle = h("input", { type: "checkbox" });
+  const gridToggle = h("input", { type: "checkbox" });
+  const guidesPop = h(
+    "div",
+    { class: "popover", hidden: true },
+    h("label", { class: "toggle" }, "Title and action safe", safeToggle),
+    h("label", { class: "toggle" }, "Grid and thirds", gridToggle),
+    h("p", { class: "hint" }, "Guides show while you draw; they are never exported."),
   );
 
   // Selection action bar.
@@ -363,7 +411,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const selCount = h("span", { class: "selbar-count" });
   const selbar = h("div", { class: "selbar", hidden: true }, selCount, h("div", { class: "sep" }), selDup, selColor, selFlip, selFront, selBack, h("div", { class: "sep" }), selDelete);
 
-  const workspace = h("div", { class: "workspace" }, stage, rail, selbar, colorPop, toolPop, stabPop, onionPop);
+  const workspace = h("div", { class: "workspace" }, stage, rail, selbar, colorPop, toolPop, stabPop, onionPop, guidesPop);
 
   // Timeline.
   const prevBtn = iconButton("prev", "Previous drawing", ",");
@@ -433,7 +481,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       if (l !== undefined) edit(updateLayer(project(), i, { locked: !l.locked }));
     },
     layerMenu: (i, x, y) => {
-      openMenu(x, y, layerMenu(i));
+      openMenu(x, y, layerMenu(i, x, y));
+    },
+    motionKeyMenu: (i, f, x, y) => {
+      openMenu(x, y, motionKeyMenu(i, f));
     },
     celMenu: (x, y) => {
       openMenu(x, y, celMenu());
@@ -454,7 +505,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   // Rendering ---------------------------------------------------------------------------
 
-  const project = (): Project => history.current;
+  // A change being dragged (the transform tool's), shown before it is committed.
+  let previewing: Project | undefined;
+  const project = (): Project => previewing ?? history.current;
   const drawing = (): DrawingLayer | undefined => {
     const l = project().layers[layerIdx];
     return l !== undefined && isDrawing(l) ? l : undefined;
@@ -582,6 +635,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     guideCtx.clearRect(0, 0, W, H);
     if (playing) return;
     const px = 1 / view.scale;
+    drawFrameGuides(guideCtx, px);
     if (settings.symmetry) {
       guideCtx.save();
       guideCtx.strokeStyle = "rgba(47, 107, 255, 0.55)";
@@ -617,6 +671,47 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     }
   };
 
+  /** Safe areas and the grid, in canvas space, under the tools' own guides. */
+  const drawFrameGuides = (ctx: Ctx, px: number): void => {
+    ctx.save();
+    ctx.lineWidth = px;
+    if (settings.grid) {
+      const cell = Math.min(W, H) / 12;
+      ctx.strokeStyle = "rgba(47, 107, 255, 0.12)";
+      ctx.beginPath();
+      for (let x = cell; x < W; x += cell) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+      }
+      for (let y = cell; y < H; y += cell) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(47, 107, 255, 0.4)";
+      ctx.beginPath();
+      for (const k of [1, 2]) {
+        ctx.moveTo((W * k) / 3, 0);
+        ctx.lineTo((W * k) / 3, H);
+        ctx.moveTo(0, (H * k) / 3);
+        ctx.lineTo(W, (H * k) / 3);
+      }
+      ctx.stroke();
+    }
+    if (settings.safeAreas) {
+      // Action safe at 93 % of the frame, title safe at 90 % (EBU R 95).
+      ctx.setLineDash([8 * px, 6 * px]);
+      for (const [k, colour] of [
+        [0.93, "rgba(229, 72, 77, 0.55)"],
+        [0.9, "rgba(229, 72, 77, 0.85)"],
+      ] as const) {
+        ctx.strokeStyle = colour;
+        ctx.strokeRect((W * (1 - k)) / 2, (H * (1 - k)) / 2, W * k, H * k);
+      }
+    }
+    ctx.restore();
+  };
+
   const compositeSoon = (): void => {
     if (liveQueued) return;
     liveQueued = true;
@@ -639,28 +734,33 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     const past = css.getPropertyValue("--onion-past").trim() || "#e5484d";
     const future = css.getPropertyValue("--onion-future").trim() || "#30a46c";
     const pinned = css.getPropertyValue("--accent").trim() || "#2f6bff";
-    const draw = (cel: Cel, tint: string | undefined, alpha: number): void => {
+    // Each skin where its layer's motion puts it on its own frame, then shifted while tracing.
+    const draw = (cel: Cel, tint: string | undefined, alpha: number, layer: Layer, frame: number): void => {
       onionLayers.render(cel.items, tint === undefined ? {} : { tint });
       onionScratchCtx.clearRect(0, 0, W, H);
       onionLayers.composite(onionScratchCtx);
+      onionCtx.save();
       onionCtx.globalAlpha = alpha;
+      onionCtx.translate(trace[0], trace[1]);
+      onionCtx.transform(...placementAt(layer, frame).m);
       onionCtx.drawImage(onionScratch, 0, 0);
+      onionCtx.restore();
     };
     if (settings.onion) {
       // The neighbours, or with "keys only" the nearest keys, furthest first so the nearest land on top.
-      const candidates = (step: -1 | 1, count: number): Cel[] => {
-        const out: Cel[] = [];
+      const candidates = (step: -1 | 1, count: number): [Cel, number][] => {
+        const out: [Cel, number][] = [];
         for (let i = celIdx + step; i >= 0 && i < l.cels.length && out.length < count; i += step) {
           const c = l.cels[i];
-          if (c !== undefined && (!settings.onionKeys || c.mark === "key")) out.push(c);
+          if (c !== undefined && (!settings.onionKeys || c.mark === "key")) out.push([c, i]);
         }
         return out;
       };
       const tinted = settings.onionMode === "tint";
-      const side = (cels: Cel[], tint: string): void => {
+      const side = (cels: [Cel, number][], tint: string): void => {
         for (let k = cels.length - 1; k >= 0; k--) {
           const c = cels[k];
-          if (c !== undefined) draw(c, tinted ? tint : undefined, (tinted ? 0.42 : 0.3) * (1 - k / Math.max(1, cels.length)));
+          if (c !== undefined) draw(c[0], tinted ? tint : undefined, (tinted ? 0.42 : 0.3) * (1 - k / Math.max(1, cels.length)), l, celStart(l, c[1]));
         }
       };
       side(candidates(-1, settings.onionBefore), past);
@@ -669,12 +769,12 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     // The light table: pinned drawings from any layer, faint, wherever the playhead is.
     for (const [li, layer] of project().layers.entries()) {
       if (!isDrawing(layer)) continue;
-      for (const [ci, cel] of layer.cels.entries()) if (pins.has(pinKey(li, ci)) && !(li === layerIdx && ci === celIdx)) draw(cel, pinned, 0.3);
+      for (const [ci, cel] of layer.cels.entries()) if (pins.has(pinKey(li, ci)) && !(li === layerIdx && ci === celIdx)) draw(cel, pinned, 0.3, layer, celStart(layer, ci));
     }
     onionCtx.globalAlpha = 1;
   };
 
-  const thumbs = new WeakMap<Cel, OffscreenCanvas>();
+  let thumbs = new WeakMap<Cel, OffscreenCanvas>();
   const thumbFor = (c: Cel, tw: number, th: number): OffscreenCanvas => {
     const cached = thumbs.get(c);
     if (cached !== undefined) return cached;
@@ -707,6 +807,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       case "select":
       case "eraser":
       case "fill":
+      case "transform":
+      case "text":
         return tool;
       case "rig":
         return "bone";
@@ -720,6 +822,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   };
 
   const renderChrome = (): void => {
+    renderPalette();
     const p = project();
     const cel = currentCel();
     renderCounter();
@@ -739,6 +842,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     toolButtons.eraser.classList.toggle("badge", settings.eraser === "object");
     toolButtons.eraser.title = `${ERASER_LABELS[settings.eraser]} (E)`;
     symmetryBtn.setAttribute("aria-pressed", String(settings.symmetry));
+    guidesBtn.setAttribute("aria-pressed", String(settings.safeAreas || settings.grid));
+    safeToggle.checked = settings.safeAreas;
+    gridToggle.checked = settings.grid;
     onionBtn.setAttribute("aria-pressed", String(settings.onion));
     cameraBtn.setAttribute("aria-pressed", String(p.camera.length > 0));
     stabBtn.setAttribute("aria-pressed", String(settings.stabilizer > 0));
@@ -770,11 +876,41 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   };
 
   const renderAll = (): void => {
+    loadFonts();
     renderScene();
     renderInk();
     renderOnion();
     renderTimeline();
     renderChrome();
+    if (settings.tool === "transform" && !playing) transform.refresh();
+  };
+
+  // Pictures and fonts ------------------------------------------------------------------
+
+  setImageLoader(async (asset) => {
+    const r = await fetch(assetUrl(asset));
+    if (!r.ok) throw new Error(`asset ${asset}: ${r.status}`);
+    return createImageBitmap(await r.blob());
+  });
+
+  const loadedFonts = new Set<string>();
+  /** Load the project's font files into the page, once each; text redraws as each arrives. */
+  const loadFonts = (): void => {
+    for (const f of project().fonts) {
+      const key = `${f.family}\n${f.asset}`;
+      if (loadedFonts.has(key)) continue;
+      loadedFonts.add(key);
+      void new FontFace(f.family, `url(${assetUrl(f.asset)})`).load().then(
+        (face) => {
+          document.fonts.add(face);
+          forgetLayouts();
+          mediaChanged();
+        },
+        () => {
+          say(`The font ${f.family} would not load`);
+        },
+      );
+    }
   };
 
   const fitView = (): void => {
@@ -1001,6 +1137,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   const current = (): ToolController => {
     if (pathCapture !== undefined) return pathTool;
+    if (tracing) return traceTool;
     switch (settings.tool) {
       case "select":
         return selectTool;
@@ -1017,6 +1154,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         return eyedropper;
       case "rig":
         return rigTool;
+      case "transform":
+        return transform;
+      case "text":
+        return writer;
     }
   };
 
@@ -1036,7 +1177,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
 
   // Popovers ----------------------------------------------------------------------------
 
-  const popovers = [colorPop, toolPop, stabPop, onionPop];
+  const popovers = [colorPop, toolPop, stabPop, onionPop, guidesPop];
   const closePopovers = (): void => {
     for (const p of popovers) p.hidden = true;
   };
@@ -1055,8 +1196,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       pop.style.bottom = "";
     } else {
       pop.style.left = `${Math.max(8, Math.min(ws.width - p.width - 8, a.left - ws.left + a.width / 2 - p.width / 2))}px`;
-      pop.style.top = "";
-      pop.style.bottom = "8px";
+      // From the top bar it hangs below the button; from the timeline it sits above it.
+      const fromTop = anchor.closest(".topbar") !== null;
+      pop.style.top = fromTop ? "8px" : "";
+      pop.style.bottom = fromTop ? "" : "8px";
     }
   };
 
@@ -1105,6 +1248,45 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         ];
       case "fill":
         return [choices("Fill", GAPS.map((g) => ({ value: g, label: GAP_LABELS[g] })), settings.gap, (v) => { updateSettings("gap", v); }), h("p", { class: "hint" }, "Fills go under the line art.")];
+      case "transform": {
+        const clear = h("button", { type: "button", class: "btn small" }, "Clear this layer's motion");
+        clear.addEventListener("click", () => {
+          if (edit(clearMotion(project(), layerIdx))) say("The layer stays still now");
+          closePopovers();
+        });
+        return [
+          h("p", { class: "hint" }, "Moves the whole layer and keys it at the playhead: drag to move, a corner to scale, the round handle to turn (Shift snaps), the cross to move the pivot. Delete removes the key here. Keys show as diamonds on the timeline; right-click one for easing and fades."),
+          ...(project().layers[layerIdx]?.motion == null ? [] : [clear]),
+        ];
+      }
+      case "text": {
+        const fonts = [...GENERIC_FONTS, ...project().fonts.map((f) => f.family)];
+        const fontSelect = h("select", { "aria-label": "Font" }, ...fonts.map((f) => h("option", { value: f, selected: f === settings.font }, f)));
+        fontSelect.style.fontFamily = settings.font;
+        fontSelect.addEventListener("change", () => {
+          const f = parseFontFamily(fontSelect.value);
+          if (f.ok) updateSettings("font", f.value);
+          fontSelect.style.fontFamily = fontSelect.value;
+        });
+        const addFontBtn = h("button", { type: "button", class: "btn small" }, "Add a font file…");
+        addFontBtn.addEventListener("click", () => {
+          void addFont();
+        });
+        const size = h("input", { type: "number", min: 4, max: 2000, step: 1, value: settings.fontSize, "aria-label": "Text size" });
+        size.addEventListener("change", () => {
+          const n = parseFontSize(Number(size.value));
+          if (n.ok) updateSettings("fontSize", n.value);
+          else size.value = String(settings.fontSize);
+        });
+        return [
+          h("label", {}, "Font", fontSelect),
+          addFontBtn,
+          h("label", {}, "Size", size),
+          choices("Style", [{ value: "normal", label: "Regular" }, { value: "bold", label: "Bold" }, { value: "italic", label: "Italic" }, { value: "bold-italic", label: "Bold italic" }] as const, settings.textStyle, (v) => { updateSettings("textStyle", v); }),
+          choices("Align", [{ value: "left", label: "Left" }, { value: "center", label: "Centre" }, { value: "right", label: "Right" }] as const, settings.textAlign, (v) => { updateSettings("textAlign", v); }),
+          h("p", { class: "hint" }, "Tap to write, tap a text to change it; ⌘↩ or tap away to finish. Move and scale it with Select, animate it with Transform, or type it on letter by letter with Typewriter in the drawing menu."),
+        ];
+      }
       case "select":
         return [h("p", { class: "hint" }, "Tap an item, or draw a loop around several. Drag to move, corners to scale, the round handle to rotate.")];
       case "rig": {
@@ -1141,7 +1323,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   };
 
   /** Tapping the tool you are already on opens its options. */
-  const RAIL_TOOLS = ["select", "brush", "scatter", "eraser", "shape", "fill", "rig"] as const;
+  const RAIL_TOOLS = ["select", "transform", "brush", "scatter", "eraser", "shape", "text", "fill", "rig"] as const;
   for (const tool of RAIL_TOOLS) {
     const b = toolButtons[tool];
     b.addEventListener(
@@ -1227,8 +1409,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         edit(addDrawingLayer(project(), Math.max(-1, at - 1), label("Background", "Background"), true), { layer: Math.max(0, at), cel: 0 });
       },
     },
+    { label: "Background picture…", action: () => { void insertImage(true); } },
+    { label: "Picture into this drawing…", action: () => { void insertImage(false); } },
     "separator",
-    { label: "Reference image…", action: () => { void addReference("image/*", "image"); } },
+    { label: "Reference image (for tracing)…", action: () => { void addReference("image/*", "image"); } },
     { label: "Reference video…", action: () => { void addReference("video/*", "video"); } },
     { label: "Audio track…", action: () => { void addAudioTrack(); } },
   ];
@@ -1260,7 +1444,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     edit(addAudio(project(), makeAudioTrack(tid.value, id.value, label(file.name.replace(/\.[^.]+$/, ""), "Audio"), unwrap(parseOffset(0)), unwrap(parseVolume(1)), false)));
   };
 
-  const layerMenu = (i: number): MenuItem[] => {
+  const layerMenu = (i: number, x: number, y: number): MenuItem[] => {
     const l = project().layers[i];
     if (l === undefined) return [];
     const drawingLayers = project().layers.filter(isDrawing).length;
@@ -1286,11 +1470,45 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       { label: l.locked ? "Unlock" : "Lock", action: () => { edit(updateLayer(project(), i, { locked: !l.locked })); } },
       "separator",
       ...opacities,
+      { label: `Blend: ${BLEND_LABELS[l.blend]}…`, action: () => { openMenu(x, y, blendMenu(i)); } },
+      { label: "Clip to the layer below", checked: l.clip, disabled: i === 0, action: () => { edit(updateLayer(project(), i, { clip: !l.clip })); } },
+      ...(l.motion === null ? [] : [{ label: `Clear motion (${l.motion.keys.length} ${l.motion.keys.length === 1 ? "key" : "keys"})`, action: () => { edit(clearMotion(project(), i)); } }]),
       "separator",
       { label: "Move up", disabled: i >= project().layers.length - 1, action: () => { edit(moveLayer(project(), i, i + 1), { layer: i + 1 }); } },
       { label: "Move down", disabled: i === 0, action: () => { edit(moveLayer(project(), i, i - 1), { layer: i - 1 }); } },
       "separator",
       { label: "Delete layer", danger: true, disabled: l.kind === "drawing" && drawingLayers === 1, action: () => { edit(removeLayer(project(), i), { layer: Math.max(0, i - 1) }); } },
+    ];
+  };
+
+  const BLEND_LABELS: Record<Blend, string> = { normal: "Normal", multiply: "Multiply", screen: "Screen", overlay: "Overlay", add: "Add (glow)", darken: "Darken", lighten: "Lighten" };
+
+  const blendMenu = (i: number): MenuItem[] => {
+    const l = project().layers[i];
+    if (l === undefined) return [];
+    return BLENDS.map((b): MenuItem => ({ label: BLEND_LABELS[b], checked: l.blend === b, action: () => { edit(updateLayer(project(), i, { blend: b })); } }));
+  };
+
+  const EASE_LABELS: Record<(typeof EASES)[number], string> = { linear: "Linear", in: "Ease in", out: "Ease out", inOut: "Ease in and out" };
+
+  /** A layer's motion key: its easing into the next, its fade, or gone. */
+  const motionKeyMenu = (i: number, frame: number): MenuItem[] => {
+    const l = project().layers[i];
+    const k = l?.motion?.keys.find((x) => x.frame === frame);
+    if (l?.motion == null || k === undefined) return [];
+    const pivot = l.motion.pivot;
+    const set = (ease: (typeof EASES)[number], fade: number): void => {
+      const f = parseFade(fade);
+      if (f.ok) edit(setMotionKey(project(), i, makeMotionKey(k.frame, k.position, k.scale, k.rotation, f.value, ease), pivot));
+    };
+    return [
+      { label: "Go to this key", action: () => { scrub(frame); } },
+      "separator",
+      ...EASES.map((e): MenuItem => ({ label: EASE_LABELS[e], checked: k.ease === e, action: () => { set(e, k.opacity); } })),
+      "separator",
+      ...[1, 0.75, 0.5, 0.25, 0].map((o): MenuItem => ({ label: o === 0 ? "Faded out" : `Shown ${Math.round(o * 100)}%`, checked: Math.abs(k.opacity - o) < 0.01, action: () => { set(k.ease, o); } })),
+      "separator",
+      { label: "Delete key", danger: true, action: () => { edit(removeMotionKey(project(), i, frame)); } },
     ];
   };
 
@@ -1320,8 +1538,20 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     const c = currentCel();
     if (c === undefined) return [];
     const pinned = pins.has(pinKey(layerIdx, celIdx));
+    const textAt = c.items.findIndex((x) => x.kind === "text");
+    const typeOn = (by: "letter" | "word", hold: number): void => {
+      const n = parseHold(hold);
+      if (n.ok && edit(typewriter(project(), where(), textAt, by, n.value))) say("Typed on: scrub to see it");
+    };
     return [
       ...rangeMenu(),
+      ...(textAt < 0
+        ? []
+        : [
+            { label: "Typewriter: a letter every 2 frames", action: () => { typeOn("letter", 2); } },
+            { label: "Typewriter: a word every 6 frames", action: () => { typeOn("word", 6); } },
+            "separator" as const,
+          ]),
       ...marks.map((m): MenuItem => ({ label: m.label, checked: c.mark === m.mark, action: () => { edit(setMark(project(), where(), m.mark)); } })),
       "separator",
       {
@@ -1562,6 +1792,39 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   };
 
   /** While a path is being drawn, the pen draws a guide instead of ink. */
+  /** Shift and trace: drag to slide the onion skins; drawing stays off until it is turned off. */
+  const traceTool: ToolController = (() => {
+    let from: { at: XY; start: XY } | undefined;
+    const onCanvas = (sm: Sample): XY => apply(placement().m, sm.x, sm.y);
+    return {
+      down: (sm) => {
+        from = { at: onCanvas(sm), start: trace };
+      },
+      move: (sm) => {
+        if (from === undefined) return;
+        const p = onCanvas(sm);
+        trace = [from.start[0] + p[0] - from.at[0], from.start[1] + p[1] - from.at[1]];
+        renderOnion();
+      },
+      up: () => {
+        from = undefined;
+      },
+      cancel: () => {
+        from = undefined;
+      },
+      deactivate: () => {
+        from = undefined;
+      },
+    };
+  })();
+
+  const setTracing = (on: boolean): void => {
+    tracing = on;
+    traceBtn.setAttribute("aria-pressed", String(on));
+    workspace.classList.toggle("tracing", on);
+    if (on) say("Drag to slide the onion skins; turn it off to draw");
+  };
+
   const pathTool: ToolController = (() => {
     let pts: XY[] = [];
     const show = (): void => {
@@ -1779,6 +2042,184 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       },
     };
   })();
+
+  // Transform and text ------------------------------------------------------------------
+
+  const transform = transformTool({
+    width: W,
+    height: H,
+    base: () => history.current,
+    layer: () => layerIdx,
+    frame: () => t,
+    cel: currentCel,
+    scale: () => view.scale,
+    shift: () => shiftHeld,
+    preview: (p) => {
+      previewing = p;
+      renderScene();
+      composite();
+    },
+    edit: (r) => edit(r),
+    guides: (draw) => {
+      // Its handles are in canvas space; guides are drawn in the edited layer's.
+      guideDraw = draw === null ? null : (ctx, px) => {
+        ctx.transform(...invert(placement().m));
+        draw(ctx, px);
+      };
+      compositeSoon();
+    },
+    say,
+  });
+
+  /** A box over the canvas to type into, in the text's own font, size and turn. */
+  const askOnCanvas: AskText = (at, look) =>
+    new Promise((resolve) => {
+      const area = h("textarea", { class: "text-entry", spellcheck: false, rows: 1, "aria-label": "Text" });
+      area.value = look.text;
+      const m = placement().m;
+      const [cx, cy] = apply(m, at[0], at[1]);
+      const [sx, sy] = toScreen(view, cx, cy);
+      const k = view.scale * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+      area.style.left = `${sx}px`;
+      area.style.top = `${sy}px`;
+      area.style.font = fontCss({ font: look.font, style: look.style, size: Math.max(8, look.size * k) });
+      area.style.lineHeight = "1.2";
+      area.style.color = look.color;
+      area.style.textAlign = look.align;
+      area.style.transform = `translate(-50%, -50%) rotate(${look.rotation + view.rotation}rad)`;
+      const grow = (): void => {
+        area.style.width = "0px";
+        area.style.height = "0px";
+        area.style.width = `${area.scrollWidth + 12}px`;
+        area.style.height = `${area.scrollHeight}px`;
+      };
+      let done = false;
+      const finish = (v: string | undefined): void => {
+        if (done) return;
+        done = true;
+        area.remove();
+        resolve(v);
+      };
+      area.addEventListener("input", grow);
+      area.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") finish(undefined);
+        else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) finish(area.value);
+      });
+      area.addEventListener("blur", () => {
+        finish(area.value);
+      });
+      area.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+      });
+      workspace.append(area);
+      grow();
+      area.focus();
+    });
+
+  const writer = textTool(host, askOnCanvas);
+
+  // A picture or font arrived: frames drawn before it are stale.
+  const stopMedia = onMediaReady(() => {
+    cache.clear();
+    thumbs = new WeakMap();
+    renderAll();
+  });
+  signal.addEventListener("abort", stopMedia);
+
+  /** A picture into this drawing (fitted inside the canvas), or as a new background layer (filling it). */
+  const insertImage = async (background: boolean): Promise<void> => {
+    const file = await pickFile("image/*");
+    if (file === undefined) return;
+    const bitmap = await createImageBitmap(file).catch(() => undefined);
+    if (bitmap === undefined) {
+      say("That file is not a picture this browser can read");
+      return;
+    }
+    const id = await upload(file);
+    if (!id.ok) {
+      say(id.error);
+      return;
+    }
+    const k = background ? Math.max(W / bitmap.width, H / bitmap.height) : Math.min(W / bitmap.width, H / bitmap.height, 1) * 0.8;
+    const item = andThen(parseVec([W / 2, H / 2]), (center) =>
+      andThen(parseExtent(bitmap.width * k), (width) =>
+        andThen(parseExtent(bitmap.height * k), (height) =>
+          makeItem({ kind: "image", layer: "color", asset: id.value, opacity: unwrap(parseOpacity(1)), center, width, height, rotation: normalizeAngle(0), flip: false }),
+        ),
+      ),
+    );
+    bitmap.close();
+    if (!item.ok) {
+      say(item.error);
+      return;
+    }
+    if (!background) {
+      edit(andThen(editable(), (at) => addItems(project(), at, [item.value])));
+      return;
+    }
+    const first = project().layers.findIndex((l) => l.kind === "drawing");
+    const at = Math.max(0, first);
+    edit(andThen(addDrawingLayer(project(), Math.max(-1, first - 1), label(file.name.replace(/\.[^.]+$/, ""), "Background"), true), (p) => addItems(p, { layer: at, cel: 0 }, [item.value])), { layer: at, cel: 0 });
+  };
+
+  /** A font file into the project; its family is named after the file. */
+  const addFont = async (): Promise<void> => {
+    const file = await pickFile(".ttf,.otf,.woff,.woff2,font/*");
+    if (file === undefined) return;
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const type = file.type.startsWith("font/") ? file.type : ext === "otf" ? "font/otf" : ext === "woff" ? "font/woff" : ext === "woff2" ? "font/woff2" : "font/ttf";
+    const family = parseFontFamily(file.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9 _-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 64) || "Custom font");
+    if (!family.ok) {
+      say(family.error);
+      return;
+    }
+    const id = await upload(new File([file], file.name, { type }));
+    if (!id.ok) {
+      say(id.error);
+      return;
+    }
+    if (edit(setFonts(project(), [...project().fonts.filter((f) => f.family !== family.value), makeProjectFont(family.value, id.value)]))) {
+      updateSettings("font", family.value);
+      say(`Font “${family.value}” added`);
+      closePopovers();
+    }
+  };
+
+  // Project colours ----------------------------------------------------------------------
+
+  let shownPalette = "";
+  const renderPalette = (): void => {
+    const pal = project().palette;
+    const key = pal.join(",");
+    if (key === shownPalette) return;
+    shownPalette = key;
+    projectSwatches.replaceChildren(
+      ...pal.map((c) => {
+        const b = h("button", { type: "button", "aria-label": c, title: `${c} · right-click to recolour everything` });
+        b.style.background = c;
+        b.addEventListener("click", () => {
+          setColor(c);
+        });
+        b.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          openMenu(e.clientX, e.clientY, [
+            { label: "Use this colour", action: () => { setColor(c); } },
+            {
+              label: `Recolour everything in ${c} to ${settings.color}`,
+              disabled: settings.color === c,
+              action: () => {
+                if (edit(recolorAll(project(), c, settings.color))) say("Recoloured everywhere");
+              },
+            },
+            { label: "Remove from the project", danger: true, action: () => { edit(setPalette(project(), project().palette.filter((x) => x !== c))); } },
+          ]);
+        });
+        return b;
+      }),
+      addSwatch,
+    );
+  };
 
   // Layout: the tool rail moves, the timeline resizes ------------------------------------
 
@@ -2194,6 +2635,11 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   );
   title.addEventListener("keydown", (e) => { if (e.key === "Enter") title.blur(); }, opts);
   zoomLabel.addEventListener("click", fitView, opts);
+  traceBtn.addEventListener("click", () => { setTracing(!tracing); }, opts);
+  traceReset.addEventListener("click", () => { trace = [0, 0]; setTracing(false); renderOnion(); }, opts);
+  guidesBtn.addEventListener("click", () => { openPopover(guidesPop, guidesBtn); }, opts);
+  safeToggle.addEventListener("change", () => { updateSettings("safeAreas", safeToggle.checked); compositeSoon(); }, opts);
+  gridToggle.addEventListener("change", () => { updateSettings("grid", gridToggle.checked); compositeSoon(); }, opts);
   symmetryBtn.addEventListener("click", () => { updateSettings("symmetry", !settings.symmetry); compositeSoon(); }, opts);
   undoBtn.addEventListener("click", undo, opts);
   redoBtn.addEventListener("click", redo, opts);
