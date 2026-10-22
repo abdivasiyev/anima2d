@@ -45,6 +45,7 @@ module Anima.Types.Project
     , replaceItemsAt
     , insertDrawing
     , addLayer
+    , restyleLayer
     , AssetId
     , Revision
     , firstRevision
@@ -1214,6 +1215,29 @@ duration :: Project -> Int
 duration p = maximum (1 :| [sum [n | Cel (Hold n) _ _ _ <- NonEmpty.toList cels] | DrawingLayer _ _ cels _ <- NonEmpty.toList p.layers])
 
 -- Edits (for agents) -------------------------------------------------------------------
+
+{- | A layer's blend, clipping and motion, from an agent's JSON object: each key optional
+(kept when missing), parsed as in a project; @"motion": null@ makes the layer still.
+-}
+restyleLayer :: Int -> Fields -> Project -> Either Text Project
+restyleLayer li o p = do
+    let
+        ls = NonEmpty.toList p.layers
+        given :: Text -> (Value -> Either Text a) -> a -> Either Text a
+        given name parser keep = if KeyMap.member (Key.fromText name) o then field name parser o else Right keep
+    l <- maybe (Left "expected a layer") Right (lookup li (zip [0 ..] ls))
+    let
+        lk = lookOf l
+    b <- given "blend" blendFrom lk.blend
+    c <- given "clip" boolFrom lk.clip
+    m <- given "motion" motionFrom lk.motion
+    let
+        lk' = lk {blend = b, clip = c, motion = m}
+        l' = case l of
+            DrawingLayer _ holdLast cels rig -> DrawingLayer lk' holdLast cels rig
+            ReferenceLayer _ a media -> ReferenceLayer lk' a media
+    layers' <- nonEmpty "expected a layer" [if i == li then l' else x | (i, x) <- zip [0 ..] ls]
+    checked p {layers = layers'}
 
 -- | A new project with one drawing layer and one empty drawing.
 newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project

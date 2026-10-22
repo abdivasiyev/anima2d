@@ -10,7 +10,8 @@ import { andThen, each, err, ok, type Result } from "./result";
 import { FPS_VALUES, parseFps, parseHeight, parseLabel, parseWidth, type Fps, type Height, type LabelName, type Width } from "./project";
 import { array, bind, field, object, parseWith, string } from "./wire";
 
-export const CODECS = ["h264", "hevc"] as const;
+/** H.264 and HEVC make MP4s; ProRes 4444 (on the Mac) makes a .mov that keeps transparency. */
+export const CODECS = ["h264", "hevc", "prores"] as const;
 export type Codec = (typeof CODECS)[number];
 
 export const QUALITIES = ["standard", "high", "max"] as const;
@@ -27,6 +28,13 @@ const oneOf = <T extends string>(values: readonly T[], expected: string) => (raw
 };
 
 const parseBool = (raw: unknown): Result<boolean> => (typeof raw === "boolean" ? ok(raw) : err("expected true or false"));
+
+export const BACKGROUNDS = ["white", "transparent"] as const;
+/** White paper, or none: kept by ProRes 4444, PNG frames and GIFs. */
+export type Background = (typeof BACKGROUNDS)[number];
+
+const parseBackground = (raw: unknown): Result<Background> =>
+  raw === undefined || raw === null ? ok("white") : oneOf(BACKGROUNDS, 'expected a background of "white" or "transparent"')(raw);
 
 /** A preset's own frame rate, or "project" to keep the project's. */
 export type PresetFps = Fps | "project";
@@ -45,6 +53,7 @@ export interface PresetFields {
   /** Render through the camera keys, if the project has any. */
   readonly camera: boolean;
   readonly audio: boolean;
+  readonly background: Background;
 }
 
 export type Preset = Brand<PresetFields, "Preset">;
@@ -60,16 +69,20 @@ export const parsePreset = (raw: unknown): Result<Preset> =>
         width: yield* field(o, "width", parseWidth),
         height: yield* field(o, "height", parseHeight),
         fps: yield* field(o, "fps", parsePresetFps),
-        codec: yield* field(o, "codec", oneOf(CODECS, 'expected a codec of "h264" or "hevc"')),
+        codec: yield* field(o, "codec", oneOf(CODECS, 'expected a codec of "h264", "hevc" or "prores"')),
         quality: yield* field(o, "quality", oneOf(QUALITIES, 'expected a quality of "standard", "high" or "max"')),
         fit: yield* field(o, "fit", oneOf(FITS, 'expected a fit of "contain" or "cover"')),
         camera: yield* field(o, "camera", parseBool),
         audio: yield* field(o, "audio", parseBool),
+        background: yield* field(o, "background", parseBackground),
       }),
     );
   });
 
 export const unparsePreset = (p: Preset): unknown => ({ ...p });
+
+/** Whether a preset's video keeps an empty background (only ProRes 4444 can). */
+export const keepsAlpha = (p: Preset): boolean => p.codec === "prores" && p.background === "transparent";
 
 const builtIn = (id: string, name: string, width: number, height: number): Preset => {
   const r = parsePreset({ id, name, width, height, fps: "project", codec: "h264", quality: "high", fit: "contain", camera: true, audio: true });

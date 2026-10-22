@@ -10,6 +10,8 @@
     "test": "vitest"
   },
   "dependencies": {
+    "fflate": "0.8.2",
+    "gifenc": "1.0.3",
     "lucide": "^0.544.0",
     "mediabunny": "^1.62.0",
     "perfect-freehand": "^1.2.2"

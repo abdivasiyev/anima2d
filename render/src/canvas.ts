@@ -5,7 +5,9 @@
  * Skia canvas of the same size. This is the one adapter between the two worlds, so it is
  * where the types are bridged: Skia's context implements every call the renderer makes.
  */
-import { createCanvas } from "@napi-rs/canvas";
+import { GlobalFonts, createCanvas, loadImage } from "@napi-rs/canvas";
+
+import type { ImageLoader } from "../../web/src/editor/media";
 
 class SkiaOffscreenCanvas {
   constructor(width: number, height: number) {
@@ -14,3 +16,10 @@ class SkiaOffscreenCanvas {
 }
 
 Reflect.set(globalThis, "OffscreenCanvas", SkiaOffscreenCanvas);
+
+/** Pictures from a file path, as Skia images; the renderer draws them like browser bitmaps. */
+export const skiaImages = (pathOf: (asset: string) => string): ImageLoader => async (asset) =>
+  (await loadImage(pathOf(asset))) as unknown as CanvasImageSource & { readonly width: number; readonly height: number };
+
+/** A project's font file, under the family its text items name. */
+export const registerFont = (path: string, family: string): boolean => GlobalFonts.registerFromPath(path, family) !== null;

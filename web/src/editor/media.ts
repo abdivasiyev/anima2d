@@ -5,7 +5,7 @@
  * Until a picture arrives its item draws as a placeholder, and listeners hear when it lands,
  * so cached frames can be drawn again.
  */
-import type { TextFields } from "../domain/project";
+import type { Project, TextFields } from "../domain/project";
 import type { Ctx } from "./render";
 
 export type ImageLoader = (asset: string) => Promise<CanvasImageSource & { readonly width: number; readonly height: number }>;
@@ -55,6 +55,10 @@ export const imageFor = (asset: string): CanvasImageSource | undefined => {
   if (slot === undefined) void load(asset);
   return slot?.state === "ready" ? slot.image : undefined;
 };
+
+/** Every picture a project's drawings use, so exported frames never draw a placeholder. */
+export const projectImages = (p: Project): string[] =>
+  p.layers.flatMap((l) => (l.kind === "drawing" ? l.cels.flatMap((c) => c.items.flatMap((i) => (i.kind === "image" ? [i.asset] : []))) : []));
 
 /** Load every picture first (export and the render agent draw each frame once, so they wait). */
 export const preloadImages = async (assets: Iterable<string>): Promise<void> => {

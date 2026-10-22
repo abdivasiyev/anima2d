@@ -20,6 +20,12 @@ on your own server; the editor keeps working when that server is off.
 - Selection: tap or lasso; move, scale, rotate, flip, restack, recolour, duplicate, copy
   and paste between drawings.
 - Mirror symmetry; hold the pen still at the end of a line to straighten it.
+- Text in any of the browser's fonts or in font files added to the project: bold,
+  italic, aligned, turned; select it to move and scale it like any item.
+- Pictures: a background picture (a layer of its own, held to the end) or a picture in
+  any drawing, to move, scale, turn, mirror and animate.
+- Project colours kept with the project; recolour every item in one colour at once.
+- Guides: title- and action-safe frames and a grid with the thirds marked.
 
 **Animating**
 - Layers, bottom to top: drawing layers, background layers (drawn once, held to the end),
@@ -28,7 +34,12 @@ on your own server; the editor keeps working when that server is off.
   breakdowns and inbetweens. Scrub the ruler (audio follows, for lip sync); loop a range,
   play ping-pong or slowed down.
 - Onion skin before and after, tinted or in original colours, or keys only; pin any
-  drawing to the light table.
+  drawing to the light table; shift and trace slides the skins to trace a part anew.
+- Layer keyframes: the Transform tool moves, scales, turns and fades a whole layer about
+  its pivot, keyed at the playhead, with easing; the path shows on the canvas.
+- Blend modes per layer (multiply, screen, overlay, add, darken, lighten), and clipping
+  a layer to the one below for shading inside the lines.
+- Typewriter: a text typed on a letter or a word at a time.
 - Sequences: reverse, duplicate, repeat as a cycle, ping-pong, delete.
 - Inbetween: drawings between two others, by matching their items (strokes morph,
   shapes interpolate, colours blend), with easing.
@@ -45,8 +56,9 @@ on your own server; the editor keeps working when that server is off.
   it is back. Saves are revisioned: two devices, or the editor and an agent, never
   overwrite each other; a conflicting version is kept as a copy.
 - Export presets for YouTube 4K, 2K, 1080p, 720p and Shorts, and presets of your own.
-  Export on the device (WebCodecs, MP4), or render on the Mac's GPU (VideoToolbox) through
-  the render agent.
+  Export on the device (WebCodecs MP4, PNG frames in a ZIP, or an animated GIF), or render
+  on the Mac through the render agent (H.264 and HEVC on VideoToolbox, or ProRes 4444).
+  A transparent background is kept by PNG frames, GIFs and ProRes.
 
 ## Layout
 
@@ -73,7 +85,7 @@ run `just npm-hash` so the Nix build pins the new dependencies.
 
 | Key | Action |
 |---|---|
-| `V` `B` `G` `E` `U` `K` `I` `R` | Select, brush, scatter, eraser, shapes, fill, eyedropper, rig |
+| `V` `Q` `B` `G` `E` `U` `T` `K` `I` `R` | Select, transform, brush, scatter, eraser, shapes, text, fill, eyedropper, rig |
 | `[` / `]` | Smaller / larger brush |
 | `,` / `.` | Previous / next drawing; `←` / `→` one frame |
 | `N` / `D` | New / duplicate drawing |
@@ -84,7 +96,8 @@ run `just npm-hash` so the Nix build pins the new dependencies.
 
 Mouse and trackpad: the left button draws; the wheel and a pinch zoom; Shift+scroll, a
 sideways swipe, Space+drag or the middle button pan; right-click (long-press on the iPad)
-opens the menu.
+opens the menu. Drag the toolbar by its grip to either edge; drag the timeline's top edge
+to resize it.
 
 ## API
 
@@ -95,11 +108,11 @@ opens the menu.
 | `GET` | `/api/projects/:id` | A project; its revision in `X-Revision` |
 | `GET` | `/api/projects/:id/summary` | Its summary (cheap; editors poll it) |
 | `PUT` | `/api/projects/:id` | Save; `X-Base-Revision` names the revision it started from, 409 if stale |
-| `POST` | `/api/assets` | Upload an image, video or audio file (streamed, 512 MB at most) |
+| `POST` | `/api/assets` | Upload an image, video, audio or font file (streamed, 512 MB at most) |
 | `GET` | `/api/assets/:id` | Download it (range requests work) |
 | `POST` | `/api/renders` | Queue a render for the Mac: `{"project_id", "preset"}` |
 | `GET` | `/api/renders` | Render statuses |
-| `GET` | `/api/renders/:id/video` | The finished MP4 |
+| `GET` | `/api/renders/:id/video` | The finished video (MP4, or a ProRes .mov) |
 
 The server has no login of its own; put it behind a single sign-on gate (at
 example.com, Caddy asks an OAuth2 proxy first).
@@ -108,8 +121,8 @@ example.com, Caddy asks an OAuth2 proxy first).
 
 `anima2d serve --mcp-port 9216` adds an MCP server (streamable HTTP, `POST /mcp`) so agents
 can draw: `list_projects`, `get_project`, `create_project`, `add_layer`, `get_drawing`,
-`add_items`, `replace_items`, `add_drawing`, and `item_format`, the reference of the item
-JSON with examples. Items go through the same parser as the editor's saves, so a mistake
+`add_items`, `replace_items`, `add_drawing`, `set_layer` (blend, clipping and motion keys),
+and `item_format`, the reference of the item and motion JSON with examples. Items go through the same parser as the editor's saves, so a mistake
 comes back as the exact rejection; writes are revisioned, so an open editor shows them.
 On the server it is `https://example.com/anima2d/mcp`, behind a sign-in gate.
 

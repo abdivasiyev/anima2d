@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+* Layer keyframes: the Transform tool (Q) moves, scales and turns a whole layer about its
+  pivot and keys it at the playhead; keys on the timeline with easing and fades; onion
+  skins follow the motion.
+* Layer blend modes (multiply, screen, overlay, add, darken, lighten) and clipping to the
+  layer below.
+* Text (T) in a chosen font, size, style and alignment; font files added to the project;
+  Typewriter types a text on. Pictures as items, and background pictures that export.
+* Project colours, with recolour everywhere; title/action-safe frames and a thirds grid;
+  shift and trace.
+* Exports: PNG frames (ZIP), animated GIF, transparent backgrounds, ProRes 4444 with alpha
+  on the Mac.
+* The toolbar moves to either edge; the timeline resizes; the page never zooms on a
+  double tap or pinch on the iPad; playback stays responsive on the iPad.
+* MCP: set_layer (blend, clipping, motion keys); text and image items.
+
 ## 0.1.0.0
 
 * Pencil-first drawing: pressure, stabiliser, palm rejection, brushes (pen, pencil,

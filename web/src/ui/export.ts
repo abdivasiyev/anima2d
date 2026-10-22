@@ -3,10 +3,11 @@
  * it for the Mac's GPU, and download what is finished.
  */
 import { listRenders, queueRender, renderUrl, type RenderStatus } from "../api";
-import { BUILT_IN, CODECS, FITS, QUALITIES, bitrate, parsePreset, parsePresets, presetFps, unparsePreset, type Preset } from "../domain/export";
+import { BACKGROUNDS, BUILT_IN, CODECS, FITS, QUALITIES, bitrate, parsePreset, parsePresets, presetFps, unparsePreset, type Preset } from "../domain/export";
 import { FPS_VALUES, duration, type Project } from "../domain/project";
 import { andThen } from "../domain/result";
 import { decodeJson } from "../domain/wire";
+import { renderGif, renderPngZip } from "../editor/frames";
 import { renderVideo } from "../editor/video";
 import { h } from "./dom";
 import { icon } from "./icons";
@@ -32,7 +33,7 @@ const saveCustom = (ps: readonly Preset[]): void => {
   }
 };
 
-const LABELS: Record<string, string> = { h264: "H.264 (plays everywhere)", hevc: "HEVC (smaller files)", standard: "Standard", high: "High", max: "Maximum", contain: "Fit inside (letterbox)", cover: "Fill (crop)" };
+const LABELS: Record<string, string> = { h264: "H.264 (plays everywhere)", hevc: "HEVC (smaller files)", prores: "ProRes 4444 (.mov, on the Mac)", white: "White", transparent: "Transparent", standard: "Standard", high: "High", max: "Maximum", contain: "Fit inside (letterbox)", cover: "Fill (crop)" };
 
 export interface ExportContext {
   project(): Project;
@@ -48,6 +49,33 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
   const list = h("div", { class: "preset-list", role: "radiogroup", "aria-label": "Preset" });
   const summary = h("p", { class: "hint" });
   const progress = h("progress", { max: 1, value: 0, hidden: true });
+  // What this device makes: a video, or frames. Transparency is kept by frames and ProRes.
+  const FORMATS = [
+    { value: "video", label: "Video (MP4)" },
+    { value: "png", label: "PNG frames (ZIP)" },
+    { value: "gif", label: "Animated GIF" },
+  ] as const;
+  let format: (typeof FORMATS)[number]["value"] = "video";
+  const formats = h("div", { class: "seg", role: "radiogroup", "aria-label": "Format" });
+  const clear = h("input", { type: "checkbox" });
+  const drawFormats = (): void => {
+    formats.replaceChildren(
+      ...FORMATS.map((f) => {
+        const b = h("button", { type: "button", role: "radio", "aria-checked": String(f.value === format) }, f.label);
+        b.addEventListener("click", () => {
+          format = f.value;
+          drawFormats();
+          draw();
+        });
+        return b;
+      }),
+    );
+  };
+  /** The chosen preset, with the transparent-background switch applied. */
+  const effective = (): Preset => {
+    const r = parsePreset({ ...chosen, background: clear.checked ? "transparent" : chosen.background });
+    return r.ok ? r.value : chosen;
+  };
   const status = h("p", { class: "hint" });
   const renders = h("div", { class: "render-list" });
   let abort: AbortController | undefined;
@@ -56,7 +84,8 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
     const fps = presetFps(p, ctx.project().fps);
     const secs = duration(ctx.project()) / ctx.project().fps;
     const mb = (bitrate(p, fps) * secs) / 8 / 1e6;
-    return `${p.width} × ${p.height} · ${fps} fps · ${p.codec.toUpperCase()} · about ${mb < 1 ? "<1" : Math.round(mb)} MB for ${secs.toFixed(1)} s`;
+    if (format !== "video") return `${p.width} × ${p.height} · ${fps} fps · ${Math.max(1, Math.round(secs * fps))} frames`;
+    return `${p.width} × ${p.height} · ${fps} fps · ${p.codec === "prores" ? "ProRes 4444, rendered on the Mac" : `${p.codec.toUpperCase()} · about ${mb < 1 ? "<1" : Math.round(mb)} MB`} for ${secs.toFixed(1)} s`;
   };
 
   const draw = (): void => {
@@ -94,6 +123,7 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
   const fit = h("select", { class: "select" }, ...FITS.map((f) => h("option", { value: f }, LABELS[f])));
   const camera = h("input", { type: "checkbox", checked: true });
   const audio = h("input", { type: "checkbox", checked: true });
+  const background = h("select", { class: "select" }, ...BACKGROUNDS.map((b) => h("option", { value: b }, LABELS[b])));
   const addPreset = h("button", { type: "button", class: "btn small" }, icon("add"), "Save preset");
   const custForm = h(
     "details",
@@ -109,6 +139,7 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
       h("label", { class: "field" }, h("span", {}, "Codec"), codec),
       h("label", { class: "field" }, h("span", {}, "Quality"), quality),
       h("label", { class: "field" }, h("span", {}, "Shape"), fit),
+      h("label", { class: "field" }, h("span", {}, "Background"), background),
       h("label", { class: "toggle" }, "Through the camera", camera),
       h("label", { class: "toggle" }, "With audio", audio),
     ),
@@ -127,6 +158,7 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
       fit: fit.value,
       camera: camera.checked,
       audio: audio.checked,
+      background: background.value,
     });
     if (!r.ok) {
       status.textContent = `That preset is not valid: ${r.error}.`;
@@ -160,7 +192,7 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
               { class: `render-row ${s.state}` },
               h("span", { class: "render-name" }, s.preset),
               h("span", { class: "render-state" }, s.state === "rendering" ? `${Math.round(s.progress * 100)}%` : s.state === "queued" ? "Waiting for the Mac" : s.state === "failed" ? `Failed: ${s.message}` : s.message),
-              s.state === "done" ? h("a", { class: "btn small", href: renderUrl(s.id), download: `${ctx.project().name} - ${s.preset}.mp4` }, "Download") : null,
+              s.state === "done" ? h("a", { class: "btn small", href: renderUrl(s.id), download: "" }, "Download") : null,
             ),
           )),
     );
@@ -172,9 +204,11 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
     h(
       "div",
       { class: "dialog-body" },
-      h("h3", {}, "Export video"),
+      h("h3", {}, "Export"),
+      formats,
       list,
       summary,
+      h("label", { class: "toggle" }, "Transparent background (PNG frames, GIF and ProRes keep it)", clear),
       custForm,
       progress,
       status,
@@ -208,10 +242,14 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
     mac.disabled = true;
     progress.hidden = false;
     status.textContent = "Rendering…";
-    void renderVideo(ctx.project(), chosen, ctx.audio(), (pr) => {
+    const preset = effective();
+    const onProgress = (pr: { frame: number; frames: number }): void => {
       progress.value = pr.frame / pr.frames;
       status.textContent = `Frame ${pr.frame} of ${pr.frames}`;
-    }, signal).then((r) => {
+    };
+    const ext = format === "png" ? "zip" : format === "gif" ? "gif" : "mp4";
+    const job = format === "png" ? renderPngZip(ctx.project(), preset, onProgress, signal) : format === "gif" ? renderGif(ctx.project(), preset, onProgress, signal) : renderVideo(ctx.project(), preset, ctx.audio(), onProgress, signal);
+    void job.then((r) => {
       abort = undefined;
       here.textContent = "Export on this device";
       mac.disabled = false;
@@ -221,7 +259,7 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
         return;
       }
       const url = URL.createObjectURL(r.value);
-      const a = h("a", { href: url, download: `${ctx.project().name} - ${chosen.name}.mp4` });
+      const a = h("a", { href: url, download: `${ctx.project().name} - ${chosen.name}.${ext}` });
       a.click();
       status.textContent = `Done: ${(r.value.size / 1e6).toFixed(1)} MB`;
       window.setTimeout(() => {
@@ -234,13 +272,14 @@ export const openExport = (ctx: ExportContext, host: HTMLElement): void => {
     mac.disabled = true;
     status.textContent = "Saving, then queueing…";
     void ctx.flush().then(async () => {
-      const r = await queueRender(ctx.project().id, unparsePreset(chosen));
+      const r = await queueRender(ctx.project().id, unparsePreset(effective()));
       mac.disabled = false;
       status.textContent = r.kind === "ok" ? "Queued. The Mac renders it; it appears below when done." : r.kind === "offline" ? "The server is out of reach." : r.kind === "error" ? r.error : "Refused.";
       void showRenders();
     });
   });
 
+  drawFormats();
   draw();
   void showRenders();
   poll = window.setInterval(() => void showRenders(), 3000);

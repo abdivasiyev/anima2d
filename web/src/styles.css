@@ -1624,15 +1624,6 @@ a.btn {
 }
 
 /* The project's own colours, under the house palette. */
-.pop-heading {
-  margin-top: -4px;
-  color: var(--text-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .palette.project:empty {
   display: none;
 }
@@ -1674,4 +1665,31 @@ a.btn {
 .popover .row {
   display: flex;
   gap: 6px;
+}
+
+/* The export format: one segmented row. */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-md, 8px);
+  background: var(--workspace);
+}
+
+.seg button {
+  flex: 1;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: calc(var(--r-md, 8px) - 2px);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.seg button[aria-checked="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--float-shadow);
 }

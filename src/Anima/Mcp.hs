@@ -48,11 +48,12 @@ import Anima.Types.Project
     , newProject
     , pickLayer
     , replaceItemsAt
+    , restyleLayer
     )
 
 -- | The tools that change a project; the server lists the same names for read-only agents.
 writeTools :: [Text]
-writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer"]
+writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer", "set_layer"]
 
 mcpApp :: ProjectStore -> IO Text -> Wai.Application
 mcpApp store newId req respond
@@ -111,7 +112,7 @@ instructions =
     "anima2D: 2D frame-by-frame animation. A project is a canvas, a frame rate and layers stacked bottom \
     \to top; a drawing layer is a run of drawings, each held for some frames and holding items drawn in \
     \order. A background layer holds its one drawing to the end. Call get_project for the layers and \
-    \item_format for the exact JSON of strokes, shapes, curves, fills and scatter brushes. Coordinates \
+    \item_format for the exact JSON of strokes, shapes, curves, fills, scatter brushes, text and pictures, and set_layer to move whole layers with keyframes. Coordinates \
     \are canvas pixels from the top-left. Drawings are numbered from 1; leave out `layer` to use the \
     \topmost drawing layer."
 
@@ -156,7 +157,17 @@ tools =
         , ("hold", int "Frames to hold it for, 1 to 24 (default 1)")
         ]
         ["project_id", "after"]
-    , tool "item_format" "The JSON for every kind of item, with examples. Read this before drawing." [] []
+    , tool
+        "set_layer"
+        "Change a drawing layer's blend, clipping or motion (keyframes that move, scale, turn and fade the whole layer). See item_format for the motion JSON. Leave a key out to keep it; motion null makes the layer still."
+        [ ("project_id", str "From list_projects")
+        , ("layer", str layerHelp)
+        , ("blend", str "normal | multiply | screen | overlay | add | darken | lighten")
+        , ("clip", bool "Clip to the layer below")
+        , ("motion", object ["type" .= ["object" :: Text, "null"], "description" .= ("{pivot:[x,y], keys:[{frame, position:[dx,dy], scale, rotation, opacity, ease}]}" :: Text)])
+        ]
+        ["project_id"]
+    , tool "item_format" "The JSON for every kind of item and for layer motion, with examples. Read this before drawing." [] []
     ]
     where
         layerHelp = "Layer id from get_project; leave out for the topmost drawing layer"
@@ -194,6 +205,13 @@ itemFormat =
         , "  {\"kind\":\"scatter\",\"layer\":\"line\",\"brush\":\"grass\",\"color\":\"#4f9a55\",\"size\":40,\"opacity\":1,\"seed\":42,\"points\":[[0,1000,0.6],[1920,1010,0.6]]}"
         , "erase (pixel eraser path; cuts everything drawn before it):"
         , "  {\"kind\":\"erase\",\"size\":20,\"points\":[[500,500,1],[520,510,1]]}"
+        , "text (lines split by \\n; font is sans-serif | serif | monospace | cursive | system-ui or a family from the project's fonts; style normal | bold | italic | bold-italic; size 4 to 2000; align left | center | right; centre of the block):"
+        , "  {\"kind\":\"text\",\"layer\":\"line\",\"text\":\"Hello\",\"font\":\"sans-serif\",\"style\":\"bold\",\"size\":96,\"align\":\"center\",\"color\":\"#1c1c1e\",\"opacity\":1,\"center\":[960,200],\"rotation\":0}"
+        , "image (an uploaded asset by its centre, drawn size and turn; flip mirrors it):"
+        , "  {\"kind\":\"image\",\"layer\":\"color\",\"asset\":\"<asset id>\",\"opacity\":1,\"center\":[960,540],\"width\":1920,\"height\":1080,\"rotation\":0,\"flip\":false}"
+        , ""
+        , "Layer motion (set_layer): keys in frame order, one per frame, frames from 0; position is an offset from where the drawings are; scale 0.01 to 100 and rotation turn about the pivot; opacity 0 to 1; ease linear | in | out | inOut eases into the next key."
+        , "  {\"pivot\":[960,540],\"keys\":[{\"frame\":0,\"position\":[0,0],\"scale\":1,\"rotation\":0,\"opacity\":1,\"ease\":\"inOut\"},{\"frame\":24,\"position\":[400,-100],\"scale\":1.5,\"rotation\":0.3,\"opacity\":1,\"ease\":\"linear\"}]}"
         , ""
         , "Animate by adding drawings (add_drawing with copy=true) and changing each a little: a few pixels of movement per drawing reads as smooth motion at 12 to 24 fps."
         ]
@@ -219,6 +237,10 @@ callTool store newId name args = case name of
         pure $ do
             loaded <- store.load pid
             pure $ either storeFailure (\(p, _) -> either failure ok (pickLayer want p >>= \li -> drawingAt li n p)) loaded
+    "set_layer" -> withArgs $ \o -> do
+        pid <- arg o "project_id" (asText >=>. parse)
+        want <- optional o "layer" (fmap Just . asText) Nothing
+        pure (saved <$> modifyProject store pid (\p -> pickLayer want p >>= \li -> restyleLayer li o p))
     "add_items" -> edit addItemsAt
     "replace_items" -> edit replaceItemsAt
     "add_drawing" -> withArgs $ \o -> do

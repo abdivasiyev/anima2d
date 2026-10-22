@@ -8,6 +8,7 @@ import { AudioBufferSource, BufferTarget, CanvasSource, Mp4OutputFormat, Output,
 import { bitrate, presetFps, type Preset } from "../domain/export";
 import { duration, type Project } from "../domain/project";
 import { err, ok, type Result } from "../domain/result";
+import { preloadImages, projectImages } from "./media";
 import { CelCache, drawOutput } from "./output";
 
 const SAMPLE_RATE = 48000;
@@ -44,6 +45,7 @@ export const renderVideo = async (
   onProgress: (pr: Progress) => void,
   signal: AbortSignal,
 ): Promise<Result<Blob>> => {
+  if (preset.codec === "prores") return err("ProRes renders on the Mac: use Render on the Mac");
   const fps = presetFps(preset, p.fps);
   const codec = preset.codec === "hevc" ? "hevc" : "avc";
   const rate = new Quality({ bitrate: bitrate(preset, fps), bitrateMode: "variable" });
@@ -63,6 +65,7 @@ export const renderVideo = async (
   const sound = mixed === undefined ? undefined : new AudioBufferSource({ codec: "aac", quality: new Quality({ bitrate: 192000 }) });
   if (sound !== undefined) output.addAudioTrack(sound);
   const cache = new CelCache(p.canvas.width, p.canvas.height, 32);
+  await preloadImages(projectImages(p));
   try {
     await output.start();
     for (let i = 0; i < frames; i++) {

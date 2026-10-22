@@ -11,7 +11,7 @@ status files as they are read back.
 -}
 module Anima.Renders (rendersApp) where
 
-import Control.Monad (forM, (<=<))
+import Control.Monad (filterM, forM, (<=<))
 import Data.Aeson (Value (..), object, (.=))
 import Data.List (sortOn)
 import Data.Maybe (catMaybes, fromMaybe)
@@ -25,6 +25,7 @@ import System.FilePath (takeExtension, (</>))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
@@ -50,11 +51,15 @@ presetFrom v = case v of
             String "project" -> Right ()
             Number n | n `elem` [12, 24, 25, 30, 48, 50, 60] -> Right ()
             _ -> Left "fps: expected a frame rate of 12, 24, 25, 30, 48, 50 or 60"
-        str "codec" (`elem` ["h264", "hevc"]) "expected a codec of \"h264\" or \"hevc\"" o
+        str "codec" (`elem` ["h264", "hevc", "prores"]) "expected a codec of \"h264\", \"hevc\" or \"prores\"" o
         str "quality" (`elem` ["standard", "high", "max"]) "expected a quality of \"standard\", \"high\" or \"max\"" o
         str "fit" (`elem` ["contain", "cover"]) "expected a fit of \"contain\" or \"cover\"" o
         bool "camera" o
         bool "audio" o
+        case look "background" o of
+            Null -> Right ()
+            String b | b `elem` ["white", "transparent"] -> Right ()
+            _ -> Left "background: expected a background of \"white\" or \"transparent\""
         pure (Preset v)
     _ -> Left "expected an object"
     where
@@ -142,12 +147,14 @@ rendersApp dataDir store newId req respond = do
             respond (Wai.responseLBS Http.status200 json (Aeson.encode (take 50 (sortOn (Down . created) (catMaybes found)))))
         ("GET", ["api", "renders", jid, "video"])
             | Text.all (\c -> c `elem` ['a' .. 'f'] || c `elem` ['0' .. '9'] || c == '-') jid && not (Text.null jid) -> do
+                -- An MP4, or (ProRes) a QuickTime movie.
                 let
-                    path = done </> Text.unpack jid <> ".mp4"
-                exists <- doesFileExist path
-                if exists
-                    then respond (Wai.responseFile Http.status200 [("Content-Type", "video/mp4"), ("Content-Disposition", "attachment; filename=\"anima2d-" <> Text.encodeUtf8 (Text.take 8 jid) <> ".mp4\"")] path Nothing)
-                    else respond (jsonError Http.status404 "no such video")
+                    candidates = [(done </> Text.unpack jid <> ext, ext, ctype) | (ext, ctype) <- [(".mp4", "video/mp4"), (".mov", "video/quicktime")]]
+                found <- filterM (\(path, _, _) -> doesFileExist path) candidates
+                case found of
+                    (path, ext, ctype) : _ ->
+                        respond (Wai.responseFile Http.status200 [("Content-Type", ctype), ("Content-Disposition", "attachment; filename=\"anima2d-" <> Text.encodeUtf8 (Text.take 8 jid) <> BS8.pack ext <> "\"")] path Nothing)
+                    [] -> respond (jsonError Http.status404 "no such video")
         _ -> respond (jsonError Http.status404 "not found")
     where
         json = [("Content-Type", "application/json")]
