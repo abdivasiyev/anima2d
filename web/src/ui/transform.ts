@@ -63,8 +63,15 @@ export const transformTool = (host: TransformHost): ToolController & { refresh()
   const layerOf = (p: Project): Layer | undefined => p.layers[host.layer()];
 
   /** The drawing's box in the layer's own space; the whole canvas when it is empty. */
-  const box = (): Box =>
-    unionBounds((host.cel()?.items ?? []).filter((i) => i.kind !== "erase").map(itemBounds)) ?? { x0: 0, y0: 0, x1: host.width, y1: host.height };
+  const box = (): Box => {
+    const l = layerOf(host.base());
+    if (l?.kind === "light") {
+      const [x, y] = l.light.center;
+      const r = l.light.radius;
+      return { x0: x - r, y0: y - r, x1: x + r, y1: y + r };
+    }
+    return unionBounds((host.cel()?.items ?? []).filter((i) => i.kind !== "erase").map(itemBounds)) ?? { x0: 0, y0: 0, x1: host.width, y1: host.height };
+  };
 
   const pivotOf = (l: Layer): XY => {
     if (l.motion !== null) return [l.motion.pivot[0], l.motion.pivot[1]];

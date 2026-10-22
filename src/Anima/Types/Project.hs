@@ -45,6 +45,9 @@ module Anima.Types.Project
     , replaceItemsAt
     , insertDrawing
     , addLayer
+    , addLightLayer
+    , pickAnyLayer
+    , setCamera
     , restyleLayer
     , AssetId
     , Revision
@@ -1373,6 +1376,50 @@ pickLayer want p = case [i | (i, l) <- indexedLayers, isDrawingLayer l, maybe Tr
     where
         indexedLayers = zip [0 ..] (NonEmpty.toList p.layers)
         layerIdText l = let LayerId t = (lookOf l).layerId in t
+
+-- | Any layer by id (a light, a reference), or the topmost drawing layer when none is named.
+pickAnyLayer :: Maybe Text -> Project -> Either Text Int
+pickAnyLayer Nothing p = pickLayer Nothing p
+pickAnyLayer (Just want) p = case [ i
+                                  | (i, l) <- zip [0 ..] (NonEmpty.toList p.layers)
+                                  , let
+                                        LayerId t = (lookOf l).layerId
+                                  , t == want
+                                  ] of
+    i : _ -> Right i
+    [] -> Left ("expected a layer with id " <> want)
+
+{- | A light layer on top, adding its light to everything under it; its light parsed as in
+a project.
+-}
+addLightLayer :: Text -> Value -> Project -> Either Text Project
+addLightLayer raw v p = do
+    lbl <- labelFrom (String raw)
+    li <- at "light" (lightFrom v)
+    let
+        ids =
+            [ t
+            | l <- NonEmpty.toList p.layers
+            , let
+                LayerId t = (lookOf l).layerId
+            ]
+        fresh = case [ c
+                     | n <- [length ids + 1 ..]
+                     , let
+                        c = "light-" <> tshow (n :: Int)
+                     , c `notElem` ids
+                     ] of
+            c : _ -> c
+            [] -> "light-new"
+        layer = LightLayer (plainLook (LayerId fresh) lbl) {blend = Add} li
+    layers' <- nonEmpty "expected a layer" (NonEmpty.toList p.layers <> [layer])
+    checked p {layers = layers'}
+
+-- | The camera's keys replaced (an empty list for none), parsed as in a project.
+setCamera :: Value -> Project -> Either Text Project
+setCamera v p = do
+    keys <- at "keys" ((asArray >=> bounded "keys" 0 maxCameraKeys >=> indexed cameraKeyFrom) v)
+    checked p {camera = keys}
 
 -- | The layers, for an agent: id, name, kind and number of drawings.
 layersSummary :: Project -> Value

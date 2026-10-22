@@ -41,6 +41,7 @@ import Anima.Types.Project
     , ProjectSummary
     , addItemsAt
     , addLayer
+    , addLightLayer
     , canvasFrom
     , drawingAt
     , duration
@@ -48,14 +49,16 @@ import Anima.Types.Project
     , insertDrawing
     , layersSummary
     , newProject
+    , pickAnyLayer
     , pickLayer
     , replaceItemsAt
     , restyleLayer
+    , setCamera
     )
 
 -- | The tools that change a project; the server lists the same names for read-only agents.
 writeTools :: [Text]
-writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer", "set_layer", "undo", "redo"]
+writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer", "set_layer", "undo", "redo", "add_light", "set_camera"]
 
 -- | A frame of a project drawn as a PNG: (frame from 0, width in pixels).
 type Preview = Project -> Int -> Int -> IO (Either Text LBS.ByteString)
@@ -164,12 +167,15 @@ tools =
         ["project_id", "after"]
     , tool
         "set_layer"
-        "Change a drawing layer's blend, clipping or motion (keyframes that move, scale, turn and fade the whole layer). See item_format for the motion JSON. Leave a key out to keep it; motion null makes the layer still."
+        "Change a layer's blend, clipping, motion (keyframes that move, scale, turn and fade the whole layer), depth (parallax), effects (drop shadow, rim light) or, for a light layer, its light. See item_format for the JSON. Leave a key out to keep it; null clears motion or effects."
         [ ("project_id", str "From list_projects")
         , ("layer", str layerHelp)
         , ("blend", str "normal | multiply | screen | overlay | add | darken | lighten")
         , ("clip", bool "Clip to the layer below")
         , ("motion", object ["type" .= ["object" :: Text, "null"], "description" .= ("{pivot:[x,y], keys:[{frame, position:[dx,dy], scale, rotation, opacity, ease}]}" :: Text)])
+        , ("depth", object ["type" .= ("number" :: Text), "description" .= ("0.2 to 20; 1 is the canvas plane, more is farther (moves less when the camera moves)" :: Text)])
+        , ("effects", object ["type" .= ["object" :: Text, "null"], "description" .= ("{shadow?:{color, opacity, offset:[dx,dy], blur}, rim?:{color, opacity, width, angle}}" :: Text)])
+        , ("light", object ["type" .= ("object" :: Text), "description" .= ("For a light layer: {shape, color, intensity, center, radius, angle, softness}" :: Text)])
         ]
         ["project_id"]
     , tool "undo" "Bring back the version before the latest change to the project (yours, the editor's or another agent's), as a new save that open editors show. Repeat to go further back; up to 100 versions are kept." [("project_id", str "From list_projects")] ["project_id"]
@@ -179,6 +185,16 @@ tools =
         "See a frame as it exports: a PNG of the whole picture (every visible layer, through the camera). Use it to check what you drew. Drawn by the Mac's render agent, in a second or two."
         [("project_id", str "From list_projects"), ("frame", int "Frame number on the timeline, from 1 (default 1)"), ("width", int "Image width in pixels, 64 to 1920 (default 960)")]
         ["project_id"]
+    , tool
+        "add_light"
+        "Add a light layer on top: a soft pool (radial) or band (linear) of coloured light added to everything under it. Move or animate it with set_layer motion; clip it to the layer below to light one character."
+        [("project_id", str "From list_projects"), ("name", str "1 to 40 characters"), ("light", object ["type" .= ("object" :: Text), "description" .= ("{shape: radial|linear, color, intensity 0-1, center:[x,y], radius, angle, softness 0-1}" :: Text)])]
+        ["project_id", "name", "light"]
+    , tool
+        "set_camera"
+        "Replace the camera's keys (an empty list removes the camera). Each key frames the shot and sets shake, depth of field and a tint, easing into the next. See item_format."
+        [("project_id", str "From list_projects"), ("keys", arr "Camera keys in frame order")]
+        ["project_id", "keys"]
     , tool "item_format" "The JSON for every kind of item and for layer motion, with examples. Read this before drawing." [] []
     ]
     where
@@ -222,6 +238,10 @@ itemFormat =
         , "image (an uploaded asset by its centre, drawn size and turn; flip mirrors it):"
         , "  {\"kind\":\"image\",\"layer\":\"color\",\"asset\":\"<asset id>\",\"opacity\":1,\"center\":[960,540],\"width\":1920,\"height\":1080,\"rotation\":0,\"flip\":false}"
         , ""
+        , "Depth (set_layer depth): 1 is the canvas; 3 a background, 8 far hills, 0.6 a foreground, 0.3 something near. Shows when the camera moves (parallax)."
+        , "Effects (set_layer effects): {\"shadow\":{\"color\":\"#1c1c1e\",\"opacity\":0.35,\"offset\":[14,22],\"blur\":14},\"rim\":{\"color\":\"#ffd27a\",\"opacity\":0.85,\"width\":6,\"angle\":-2.36}} — angle is where the light comes from (radians, 0 from the right, -pi/2 from above)."
+        , "Light (add_light): {\"shape\":\"radial\",\"color\":\"#ffd8a0\",\"intensity\":0.6,\"center\":[1300,300],\"radius\":700,\"angle\":0,\"softness\":0.85}; set_layer blend multiply makes it a shadow light."
+        , "Camera keys (set_camera): {\"frame\":0,\"center\":[960,540],\"zoom\":1,\"rotation\":0,\"ease\":\"inOut\",\"shake\":0,\"focus\":1,\"aperture\":0,\"tint\":\"#ff9a5c\",\"tintAmount\":0.25}; zoom 0.1 to 10, shake pixels 0 to 200, focus the depth in focus, aperture blur per unit of depth away (0 to 50), tint null for none."
         , "Layer motion (set_layer): keys in frame order, one per frame, frames from 0; position is an offset from where the drawings are; scale 0.01 to 100 and rotation turn about the pivot; opacity 0 to 1; ease linear | in | out | inOut eases into the next key."
         , "  {\"pivot\":[960,540],\"keys\":[{\"frame\":0,\"position\":[0,0],\"scale\":1,\"rotation\":0,\"opacity\":1,\"ease\":\"inOut\"},{\"frame\":24,\"position\":[400,-100],\"scale\":1.5,\"rotation\":0.3,\"opacity\":1,\"ease\":\"linear\"}]}"
         , ""
@@ -277,7 +297,16 @@ callTool store newId preview name args = case name of
     "set_layer" -> withArgs $ \o -> do
         pid <- arg o "project_id" (asText >=>. parse)
         want <- optional o "layer" (fmap Just . asText) Nothing
-        pure (saved <$> modifyProject store pid (\p -> pickLayer want p >>= \li -> restyleLayer li o p))
+        pure (saved <$> modifyProject store pid (\p -> pickAnyLayer want p >>= \li -> restyleLayer li o p))
+    "add_light" -> withArgs $ \o -> do
+        pid <- arg o "project_id" (asText >=>. parse)
+        nm <- arg o "name" asText
+        li <- arg o "light" Right
+        pure (saved <$> modifyProject store pid (addLightLayer nm li))
+    "set_camera" -> withArgs $ \o -> do
+        pid <- arg o "project_id" (asText >=>. parse)
+        keys <- arg o "keys" Right
+        pure (saved <$> modifyProject store pid (setCamera keys))
     "add_items" -> edit addItemsAt
     "replace_items" -> edit replaceItemsAt
     "add_drawing" -> withArgs $ \o -> do

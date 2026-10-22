@@ -10,7 +10,9 @@ import {
   addAudio,
   addDrawingLayer,
   addItems,
+  addLightLayer,
   addReferenceLayer,
+  setLight,
   clearMotion,
   recolorAll,
   removeMotionKey,
@@ -56,6 +58,14 @@ import {
   parseFade,
   parseFontFamily,
   parseFontSize,
+  parseDepth,
+  parsePixels,
+  makeEffects,
+  makeLight,
+  makeRim,
+  makeShadow,
+  type Rim,
+  type Shadow,
   type Blend,
   FPS_VALUES,
   MAX_TIMELINE_FRAME,
@@ -474,6 +484,19 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     clearSelection: (f) => {
       scrub(f);
     },
+    selectLayer: (i) => {
+      if (playing) stop();
+      current().deactivate();
+      layerIdx = i;
+      celIdx = 0;
+      rangeEnd = undefined;
+      renderAll();
+      const l = project().layers[i];
+      if (l?.kind === "light") {
+        if (settings.tool !== "transform") setTool("transform");
+        say("Light chosen: drag to move it, a corner to resize; its menu sets colour and shape");
+      }
+    },
     setLoop: (r) => {
       loop = r;
       renderTimeline();
@@ -573,7 +596,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const unified = (): boolean => {
     const p = project();
     const l = p.layers[layerIdx];
-    return l !== undefined && (l.clip || p.layers.some((x, i) => i > layerIdx && (x.blend !== "normal" || x.clip)));
+    return l !== undefined && (l.kind !== "drawing" || l.clip || l.effects !== null || p.layers.some((x, i) => i > layerIdx && (x.blend !== "normal" || x.clip)));
   };
 
   /** Where the edited layer is drawn at the playhead (its motion). */
@@ -1427,6 +1450,13 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         edit(addDrawingLayer(project(), Math.max(-1, at - 1), label("Background", "Background"), true), { layer: Math.max(0, at), cel: 0 });
       },
     },
+    {
+      label: "Light (a soft pool of light)",
+      action: () => {
+        const light = makeLight("radial", unwrap(parseColor("#ffd8a0")), unwrap(parseFade(0.55)), unwrap(parseVec([W * 0.7, H * 0.3])), unwrap(parsePixels(1, 200000, "radius")(Math.min(W, H) * 0.6)), normalizeAngle(0), unwrap(parseFade(0.85)));
+        if (edit(addLightLayer(project(), layerIdx, label("Light", "Light"), light))) say("Light added: move and scale it with Transform; its menu sets colour and shape");
+      },
+    },
     { label: "Background picture…", action: () => { void insertImage(true); } },
     { label: "Picture into this drawing…", action: () => { void insertImage(false); } },
     "separator",
@@ -1489,6 +1519,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
       "separator",
       ...opacities,
       { label: `Blend: ${BLEND_LABELS[l.blend]}…`, action: () => { openMenu(x, y, blendMenu(i)); } },
+      { label: `Depth: ${depthName(l.depth)}…`, action: () => { openMenu(x, y, depthMenu(i)); } },
+      ...(l.kind === "drawing" ? [{ label: "Shadow and rim light…", action: () => { openMenu(x, y, effectsMenu(i)); } }] : []),
+      ...(l.kind === "light" ? [{ label: "Light…", action: () => { openMenu(x, y, lightMenu(i)); } }] : []),
       { label: "Clip to the layer below", checked: l.clip, disabled: i === 0, action: () => { edit(updateLayer(project(), i, { clip: !l.clip })); } },
       ...(l.motion === null ? [] : [{ label: `Clear motion (${l.motion.keys.length} ${l.motion.keys.length === 1 ? "key" : "keys"})`, action: () => { edit(clearMotion(project(), i)); } }]),
       "separator",
@@ -1505,6 +1538,84 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     const l = project().layers[i];
     if (l === undefined) return [];
     return BLENDS.map((b): MenuItem => ({ label: BLEND_LABELS[b], checked: l.blend === b, action: () => { edit(updateLayer(project(), i, { blend: b })); } }));
+  };
+
+  const DEPTH_PRESETS: readonly (readonly [number, string])[] = [[0.3, "Near"], [0.6, "Foreground"], [1, "Canvas"], [1.5, "Midground"], [3, "Background"], [8, "Far"]];
+  const depthName = (d: number): string => DEPTH_PRESETS.find(([x]) => Math.abs(x - d) < 0.01)?.[1] ?? String(d);
+
+  /** How far the layer sits from the camera: parallax when the camera moves. */
+  const depthMenu = (i: number): MenuItem[] => {
+    const l = project().layers[i];
+    if (l === undefined) return [];
+    return DEPTH_PRESETS.map(([d, n]): MenuItem => ({
+      label: `${n} (${d})`,
+      checked: Math.abs(l.depth - d) < 0.01,
+      action: () => {
+        if (edit(updateLayer(project(), i, { depth: unwrap(parseDepth(d)) })) && project().camera.length === 0) say("Depth shows when the camera moves: set camera keys");
+      },
+    }));
+  };
+
+  /** Drop shadow and rim light presets; the colour pickers are the current colour. */
+  const effectsMenu = (i: number): MenuItem[] => {
+    const l = project().layers[i];
+    if (l?.kind !== "drawing") return [];
+    const fx = l.effects;
+    const set = (shadow: Shadow | null, rim: Rim | null): void => {
+      edit(updateLayer(project(), i, { effects: shadow === null && rim === null ? null : makeEffects(shadow, rim) }));
+    };
+    const shadow = (dx: number, dy: number, blur: number, opacity: number): Shadow =>
+      makeShadow(unwrap(parseColor("#1c1c1e")), unwrap(parseFade(opacity)), unwrap(parseVec([dx, dy])), unwrap(parsePixels(0, 200, "blur")(blur)));
+    const rim = (color: string, angle: number, width: number): Rim =>
+      makeRim(unwrap(parseColor(color)), unwrap(parseFade(0.85)), unwrap(parsePixels(0, 200, "width")(width)), normalizeAngle(angle));
+    const keepRim = fx?.rim ?? null;
+    const keepShadow = fx?.shadow ?? null;
+    return [
+      { label: "No shadow", checked: keepShadow === null, action: () => { set(null, keepRim); } },
+      { label: "Soft drop shadow", action: () => { set(shadow(14, 22, 14, 0.35), keepRim); } },
+      { label: "Hard drop shadow", action: () => { set(shadow(10, 14, 0, 0.5), keepRim); } },
+      { label: "Long ground shadow", action: () => { set(shadow(60, 30, 20, 0.3), keepRim); } },
+      "separator",
+      { label: "No rim light", checked: keepRim === null, action: () => { set(keepShadow, null); } },
+      { label: "Warm rim, light from top left", action: () => { set(keepShadow, rim("#ffd27a", Math.PI * -0.75, 6)); } },
+      { label: "Cool rim, light from top right", action: () => { set(keepShadow, rim("#9fd0ff", Math.PI * -0.25, 6)); } },
+      { label: "Back light, all round the top", action: () => { set(keepShadow, rim("#ffffff", Math.PI * -0.5, 10)); } },
+      { label: `Rim in the current colour (${settings.color})`, action: () => { set(keepShadow, rim(settings.color, keepRim?.angle ?? Math.PI * -0.75, keepRim?.width ?? 6)); } },
+    ];
+  };
+
+  /** A light layer's shape, colour, strength and edge; move and scale it with Transform. */
+  const lightMenu = (i: number): MenuItem[] => {
+    const l = project().layers[i];
+    if (l?.kind !== "light") return [];
+    const li = l.light;
+    const set = (patch: Partial<{ shape: "radial" | "linear"; color: string; intensity: number; softness: number }>): void => {
+      const next = makeLight(
+        patch.shape ?? li.shape,
+        patch.color === undefined ? li.color : unwrap(parseColor(patch.color)),
+        patch.intensity === undefined ? li.intensity : unwrap(parseFade(patch.intensity)),
+        li.center,
+        li.radius,
+        li.angle,
+        patch.softness === undefined ? li.softness : unwrap(parseFade(patch.softness)),
+      );
+      edit(setLight(project(), i, next));
+    };
+    return [
+      { label: "Pool of light (radial)", checked: li.shape === "radial", action: () => { set({ shape: "radial" }); } },
+      { label: "Band of light (linear)", checked: li.shape === "linear", action: () => { set({ shape: "linear" }); } },
+      "separator",
+      { label: `Colour: the current colour (${settings.color})`, action: () => { set({ color: settings.color }); } },
+      { label: "Warm sunlight", action: () => { set({ color: "#ffd8a0" }); } },
+      { label: "Cool moonlight", action: () => { set({ color: "#a8c8ff" }); } },
+      "separator",
+      ...[0.25, 0.5, 0.75, 1].map((v): MenuItem => ({ label: `Strength ${Math.round(v * 100)}%`, checked: Math.abs(li.intensity - v) < 0.01, action: () => { set({ intensity: v }); } })),
+      "separator",
+      { label: "Hard edge", checked: li.softness < 0.2, action: () => { set({ softness: 0.1 }); } },
+      { label: "Soft edge", checked: li.softness >= 0.2, action: () => { set({ softness: 0.85 }); } },
+      "separator",
+      { label: "Darken instead (shadow light, multiply)", checked: l.blend === "multiply", action: () => { edit(updateLayer(project(), i, { blend: l.blend === "multiply" ? "add" : "multiply" })); } },
+    ];
   };
 
   const EASE_LABELS: Record<(typeof EASES)[number], string> = { linear: "Linear", in: "Ease in", out: "Ease out", inOut: "Ease in and out" };
@@ -1668,12 +1779,26 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const camView = h("input", { type: "checkbox" });
   const camSet = h("button", { type: "button", class: "btn small primary" }, "Set key from the view");
   const camRemove = h("button", { type: "button", class: "btn small" }, "Remove key here");
+  // What the key also sets, each easing into the next key like the framing does.
+  const camShake = h("input", { type: "range", min: 0, max: 60, step: 1, value: 0, "aria-label": "Shake" });
+  const DEPTHS: readonly (readonly [number, string])[] = [[0.3, "Near"], [0.6, "Foreground"], [1, "Canvas"], [1.5, "Midground"], [3, "Background"], [8, "Far"]];
+  const camFocus = h("select", { class: "select", "aria-label": "Focus" }, ...DEPTHS.map(([d, n]) => h("option", { value: d }, `${n} (${d})`)));
+  const camAperture = h("input", { type: "range", min: 0, max: 20, step: 0.5, value: 0, "aria-label": "Depth blur" });
+  const camTintOn = h("input", { type: "checkbox" });
+  const camTint = h("input", { type: "color", value: "#ff9a5c", "aria-label": "Tint colour" });
+  const camTintAmount = h("input", { type: "range", min: 0, max: 1, step: 0.05, value: 0.3, "aria-label": "Tint amount" });
   const camPop = h(
     "div",
     { class: "popover", hidden: true },
     h("div", { class: "pop-heading" }, "Camera"),
     h("p", { class: "hint" }, "Pan and zoom the canvas to frame the shot, then set a key at the playhead. Playback moves between keys."),
     h("label", {}, "Into the next key", camEase),
+    h("label", {}, "Shake", camShake),
+    h("label", {}, "In focus", camFocus),
+    h("label", {}, "Depth blur", camAperture),
+    h("label", { class: "toggle" }, "Tint the frame", camTintOn),
+    h("label", {}, "Tint", h("span", { class: "range-row" }, camTint, camTintAmount)),
+    h("p", { class: "hint" }, "Layers far from the focus blur; give layers a depth in their menu for parallax. Shake, blur and tint show in playback through the camera and in exports."),
     h("label", { class: "toggle" }, "Play through the camera", camView),
     h("div", { class: "pop-actions" }, camRemove, camSet),
   );
@@ -1690,7 +1815,15 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     if (!zoom.ok) return zoom;
     if (!frame.ok) return frame;
     if (!center.ok) return center;
-    return ok(makeCameraKey(frame.value, center.value, zoom.value, normalizeAngle(-view.rotation), ez));
+    const tint = parseColor(camTint.value);
+    const look = {
+      shake: unwrap(parsePixels(0, 200, "shake")(Number(camShake.value))),
+      focus: unwrap(parseDepth(Number(camFocus.value))),
+      aperture: unwrap(parsePixels(0, 50, "aperture")(Number(camAperture.value))),
+      tint: camTintOn.checked && tint.ok ? tint.value : null,
+      tintAmount: unwrap(parseFade(camTintOn.checked ? Number(camTintAmount.value) : 0)),
+    };
+    return ok(makeCameraKey(frame.value, center.value, zoom.value, normalizeAngle(-view.rotation), ez, look));
   };
 
   // Inbetweening and motion paths -------------------------------------------------------
@@ -2725,6 +2858,16 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   cameraBtn.addEventListener("click", () => {
     camView.checked = settings.cameraView;
     camRemove.disabled = !project().camera.some((k) => k.frame === t);
+    // Start from the camera as it is here (the key on this frame, or between keys).
+    const here = cameraAt(project(), t);
+    if (here !== undefined) {
+      camShake.value = String(Math.round(here.shake));
+      camFocus.value = String(DEPTHS.reduce((best, [d]) => (Math.abs(d - here.focus) < Math.abs(best - here.focus) ? d : best), 1));
+      camAperture.value = String(here.aperture);
+      camTintOn.checked = here.tint !== null && here.tintAmount > 0;
+      if (here.tint !== null) camTint.value = here.tint;
+      camTintAmount.value = String(here.tintAmount > 0 ? here.tintAmount : 0.3);
+    }
     openPopover(camPop, cameraBtn);
   }, opts);
   camView.addEventListener("change", () => { updateSettings("cameraView", camView.checked); }, opts);

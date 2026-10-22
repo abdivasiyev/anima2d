@@ -29,6 +29,8 @@ export interface TimelineModel {
 export interface TimelineEvents {
   selectCel(layer: number, cel: number, extend: boolean): void;
   scrub(t: number): void;
+  /** A layer with no drawings (a light, a reference) chosen, to move with Transform or change. */
+  selectLayer(layer: number): void;
   /** A click on a lane's empty space: drop the selected run, move the playhead there. */
   clearSelection(t: number): void;
   setLoop(loop: LoopRange | undefined): void;
@@ -126,6 +128,7 @@ export class Timeline {
       const title = h("button", { type: "button", class: "tl-name" }, layer.kind === "reference" ? icon("image") : layer.kind === "light" ? icon("light") : null, h("span", {}, layer.name));
       title.addEventListener("click", () => {
         if (isDrawing(layer)) this.on.selectCel(i, Math.min(m.layer === i ? m.cel : 0, layer.cels.length - 1), false);
+        else this.on.selectLayer(i);
       });
       title.addEventListener("contextmenu", (e) => {
         e.preventDefault();

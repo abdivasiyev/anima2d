@@ -24,6 +24,7 @@ import {
   type AudioTrack,
   type CameraKey,
   type Color,
+  type Light,
   type MotionKey,
   type ProjectFont,
   type Vec,
@@ -218,6 +219,21 @@ export const addReferenceLayer = (p: Project, asset: AssetId, media: Media, name
     ),
   );
 
+/** A light layer above layer `below`, adding its light to what is under it. */
+export const addLightLayer = (p: Project, below: number, name: LabelName, light: Light): Result<Project> =>
+  andThen(newId("light"), (id) =>
+    andThen(makeLayer({ kind: "light", id, name, ...PLAIN_LOOK, blend: "add", light }), (layer) =>
+      rebuild(p, [...p.layers.slice(0, below + 1), layer, ...p.layers.slice(below + 1)]),
+    ),
+  );
+
+/** A light layer's light changed. */
+export const setLight = (p: Project, i: number, light: Light): Result<Project> => {
+  const l = p.layers[i];
+  if (l?.kind !== "light") return err("expected a light layer");
+  return andThen(makeLayer({ ...l, light }), (layer) => rebuild(p, p.layers.map((x, j) => (j === i ? layer : x))));
+};
+
 export const removeLayer = (p: Project, i: number): Result<Project> => rebuild(p, p.layers.filter((_, j) => j !== i));
 
 export const moveLayer = (p: Project, from: number, to: number): Result<Project> => {
@@ -228,7 +244,7 @@ export const moveLayer = (p: Project, from: number, to: number): Result<Project>
   return rebuild(p, [...rest.slice(0, k), l, ...rest.slice(k)]);
 };
 
-type LookPatch = Partial<Pick<LayerFields, "name" | "visible" | "locked" | "opacity" | "blend" | "clip" | "motion">>;
+type LookPatch = Partial<Pick<LayerFields, "name" | "visible" | "locked" | "opacity" | "blend" | "clip" | "motion" | "depth" | "effects">>;
 type LayerPatch = LookPatch & { readonly holdLast?: boolean };
 
 /** Change a layer's name, visibility, lock, opacity, blend, clipping, motion or (drawing layers) hold-last. */
@@ -247,6 +263,8 @@ const pick = (patch: LayerPatch): LookPatch => {
   if (patch.blend !== undefined) out.blend = patch.blend;
   if (patch.clip !== undefined) out.clip = patch.clip;
   if (patch.motion !== undefined) out.motion = patch.motion;
+  if (patch.depth !== undefined) out.depth = patch.depth;
+  if (patch.effects !== undefined) out.effects = patch.effects;
   if (patch.name !== undefined) out.name = patch.name;
   if (patch.visible !== undefined) out.visible = patch.visible;
   if (patch.locked !== undefined) out.locked = patch.locked;

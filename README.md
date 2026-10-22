@@ -45,6 +45,13 @@ on your own server; the editor keeps working when that server is off.
   shapes interpolate, colours blend), with easing.
 - Move along a path: draw a path and a selection travels it, optionally turning with it.
 - Camera: frame the shot by panning and zooming, set keys, and playback moves between them.
+  Each key can add handheld shake, depth of field (a layer in focus, the others blurred by
+  how far they are from it) and a tint over the frame for time of day or mood.
+- Depth: give layers a distance (near, foreground, canvas, background, far) and camera
+  moves get parallax, near layers sliding faster than far ones.
+- Lighting: light layers (a soft pool or a band of coloured light, added to what is under
+  them, or multiplied as a shadow light; moved and animated with Transform); a drop shadow
+  and a rim light on any drawing layer that follow its drawings on every frame.
 - Audio tracks with waveforms, offsets and mute.
 - Rigging (cut-out): bones on a layer's first drawing, parts bound to bones, poses on the
   other drawings (turn a bone, or Shift to reach with the whole chain); inbetweening two
@@ -125,7 +132,8 @@ example.com, Caddy asks an OAuth2 proxy first).
 
 `anima2d serve --mcp-port 9216` adds an MCP server (streamable HTTP, `POST /mcp`) so agents
 can draw: `list_projects`, `get_project`, `create_project`, `add_layer`, `get_drawing`,
-`add_items`, `replace_items`, `add_drawing`, `set_layer` (blend, clipping and motion keys),
+`add_items`, `replace_items`, `add_drawing`, `set_layer` (blend, clipping, motion keys, depth,
+effects, light), `add_light`, `set_camera` (keys with shake, depth of field and tint),
 `preview` (a frame as a PNG the model can see, drawn by the Mac's render agent), `undo` and
 `redo` (over the last 100 saved versions), and `item_format`, the reference of the item and motion JSON with examples. Items go through the same parser as the editor's saves, so a mistake
 comes back as the exact rejection; writes are revisioned, so an open editor shows them.

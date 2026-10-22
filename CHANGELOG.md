@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+* Camera: parallax by layer depth, handheld shake, depth of field and a scene tint per key.
+* Lighting: light layers (radial or linear, added or multiplied); drop shadow and rim light
+  effects on drawing layers. MCP: add_light, set_camera; set_layer takes depth, effects, light.
 * Layer keyframes: the Transform tool (Q) moves, scales and turns a whole layer about its
   pivot and keys it at the playhead; keys on the timeline with easing and fades; onion
   skins follow the motion.
