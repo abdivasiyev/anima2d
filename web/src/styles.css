@@ -1182,8 +1182,9 @@ dialog::backdrop {
   padding: 0 4px;
 }
 
+/* The tint is see-through; laid over the solid panel so frames scrolling under stay hidden. */
 .tl-head[aria-current="true"] {
-  background: var(--accent-soft);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface);
 }
 
 .tl-toggle {
