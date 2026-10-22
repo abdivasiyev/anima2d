@@ -1047,7 +1047,7 @@
     }
    ]
   },
-  "error": "layers: 1: kind: expected a layer kind of \"drawing\" or \"reference\""
+  "error": "layers: 1: kind: expected a layer kind of \"drawing\", \"reference\" or \"light\""
  },
  {
   "name": "v3 layer id with spaces",
@@ -6481,5 +6481,2689 @@
    ]
   },
   "error": "fonts: expected every font family to be different"
+ },
+ {
+  "name": "v3 depth too near",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.1,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "layers: 2: depth: expected a depth from 0.2 to 20 (1 is the canvas plane)"
+ },
+ {
+  "name": "v3 shadow blur too wide",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 500
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "layers: 2: effects: shadow: blur: expected a blur from 0 to 200 pixels"
+ },
+ {
+  "name": "v3 rim without an angle",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "layers: 2: effects: rim: angle: expected a number"
+ },
+ {
+  "name": "v3 light of unknown shape",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "spot",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "layers: 4: light: shape: expected a light shape of \"radial\" or \"linear\""
+ },
+ {
+  "name": "v3 light too bright",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 2,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "layers: 4: light: intensity: expected an intensity from 0 to 1"
+ },
+ {
+  "name": "v3 light of no size",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 0,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "layers: 4: light: radius: expected a radius from 1 to 200000 pixels"
+ },
+ {
+  "name": "v3 camera shake too strong",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 300,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "camera: 0: shake: expected a shake from 0 to 200 pixels"
+ },
+ {
+  "name": "v3 camera aperture too wide",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 80,
+     "tint": "#ff9a5c",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "camera: 0: aperture: expected an aperture from 0 to 50"
+ },
+ {
+  "name": "v3 camera tint not a colour",
+  "input": {
+   "format": 3,
+   "id": "fixture-v3-looks",
+   "name": "Blends and motion",
+   "canvas": {
+    "width": 1920,
+    "height": 1080
+   },
+   "fps": 24,
+   "layers": [
+    {
+     "kind": "reference",
+     "id": "ref-1",
+     "name": "Reference",
+     "visible": true,
+     "locked": true,
+     "opacity": 0.5,
+     "asset": "ab12cd34",
+     "media": "video"
+    },
+    {
+     "kind": "drawing",
+     "id": "bg",
+     "name": "Background",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "holdLast": true,
+     "cels": [
+      {
+       "hold": 1,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "image",
+         "layer": "color",
+         "asset": "bg-0001",
+         "opacity": 1,
+         "center": [
+          960,
+          540
+         ],
+         "width": 1920,
+         "height": 1080,
+         "rotation": 0,
+         "flip": false
+        },
+        {
+         "kind": "fill",
+         "layer": "color",
+         "color": "#9fc7e8",
+         "opacity": 1,
+         "polygons": [
+          [
+           [
+            0,
+            0
+           ],
+           [
+            1920,
+            0
+           ],
+           [
+            1920,
+            600
+           ],
+           [
+            0,
+            600
+           ]
+          ]
+         ]
+        }
+       ]
+      }
+     ],
+     "depth": 4
+    },
+    {
+     "kind": "drawing",
+     "id": "ball",
+     "name": "Ball",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.8,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 2,
+       "mark": "key",
+       "items": [
+        {
+         "kind": "shape",
+         "layer": "line",
+         "shape": "ellipse",
+         "color": "#c2413b",
+         "size": 4,
+         "opacity": 1,
+         "fill": "#c2413b",
+         "center": [
+          200,
+          800
+         ],
+         "width": 120,
+         "height": 120,
+         "rotation": 0
+        },
+        {
+         "kind": "text",
+         "layer": "line",
+         "text": "Hello,\nworld",
+         "font": "Caveat",
+         "style": "bold",
+         "size": 96,
+         "align": "center",
+         "color": "#1c1c1e",
+         "opacity": 1,
+         "center": [
+          960,
+          200
+         ],
+         "rotation": -0.1
+        }
+       ]
+      },
+      {
+       "hold": 2,
+       "mark": "inbetween",
+       "items": []
+      },
+      {
+       "hold": 2,
+       "mark": "breakdown",
+       "items": []
+      }
+     ],
+     "blend": "multiply",
+     "motion": {
+      "pivot": [
+       200,
+       800
+      ],
+      "keys": [
+       {
+        "frame": 0,
+        "position": [
+         0,
+         0
+        ],
+        "scale": 1,
+        "rotation": 0,
+        "opacity": 1,
+        "ease": "inOut"
+       },
+       {
+        "frame": 12,
+        "position": [
+         600,
+         -200
+        ],
+        "scale": 1.5,
+        "rotation": 0.5,
+        "opacity": 0.25,
+        "ease": "linear"
+       }
+      ]
+     },
+     "depth": 0.6,
+     "effects": {
+      "shadow": {
+       "color": "#1c1c1e",
+       "opacity": 0.4,
+       "offset": [
+        12,
+        18
+       ],
+       "blur": 8
+      },
+      "rim": {
+       "color": "#ffd27a",
+       "opacity": 0.8,
+       "width": 6,
+       "angle": -0.8
+      }
+     }
+    },
+    {
+     "kind": "drawing",
+     "id": "shade",
+     "name": "Shading",
+     "visible": true,
+     "locked": false,
+     "opacity": 0.6,
+     "blend": "overlay",
+     "clip": true,
+     "holdLast": false,
+     "cels": [
+      {
+       "hold": 6,
+       "mark": "none",
+       "items": [
+        {
+         "kind": "stroke",
+         "layer": "color",
+         "brush": "paint",
+         "color": "#3a2f6b",
+         "size": 40,
+         "opacity": 0.5,
+         "points": [
+          [
+           190,
+           790,
+           0.5
+          ],
+          [
+           230,
+           820,
+           0.7
+          ]
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "kind": "light",
+     "id": "sun",
+     "name": "Sun",
+     "visible": true,
+     "locked": false,
+     "opacity": 1,
+     "blend": "add",
+     "light": {
+      "shape": "radial",
+      "color": "#ffcf8a",
+      "intensity": 0.6,
+      "center": [
+       1500,
+       200
+      ],
+      "radius": 700,
+      "angle": 0,
+      "softness": 0.9
+     }
+    }
+   ],
+   "camera": [
+    {
+     "frame": 0,
+     "center": [
+      960,
+      540
+     ],
+     "zoom": 1,
+     "rotation": 0,
+     "ease": "inOut",
+     "shake": 4,
+     "focus": 0.6,
+     "aperture": 3,
+     "tint": "orange",
+     "tintAmount": 0.25
+    },
+    {
+     "frame": 12,
+     "center": [
+      600,
+      700
+     ],
+     "zoom": 1.5,
+     "rotation": -0.1,
+     "ease": "linear"
+    }
+   ],
+   "audio": [
+    {
+     "id": "audio-1",
+     "asset": "ef56ab78",
+     "name": "Voice",
+     "offset": -3,
+     "volume": 0.8,
+     "muted": false
+    }
+   ],
+   "palette": [
+    "#1c1c1e",
+    "#c2413b",
+    "#9fc7e8"
+   ],
+   "fonts": [
+    {
+     "family": "Caveat",
+     "asset": "font-caveat"
+    }
+   ]
+  },
+  "error": "camera: 0: tint: expected a colour as #rrggbb"
  }
 ]

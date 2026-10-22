@@ -920,11 +920,83 @@ data LayerLook = LayerLook
     , clip :: Bool
     -- ^ Drawn only where the layers it clips to (the nearest unclipped one below) are.
     , motion :: Maybe Motion
+    , depth :: Double
+    -- ^ How far from the camera, for parallax: 1 is the canvas plane, more is farther.
+    , effects :: Maybe Effects
     }
     deriving stock (Eq, Show)
 
 plainLook :: LayerId -> Label -> LayerLook
-plainLook i l = LayerLook i l True False (Opacity 1) Normal False Nothing
+plainLook i l = LayerLook i l True False (Opacity 1) Normal False Nothing 1 Nothing
+
+depthFrom :: Value -> Either Text Double
+depthFrom = \case
+    Null -> Right 1
+    v -> ranged Prelude.id 0.2 20 "expected a depth from 0.2 to 20 (1 is the canvas plane)" v
+
+-- | Effects that follow the drawings on every frame: a drop shadow under, a rim light over.
+data Effects = Effects {shadow :: Maybe Shadow, rim :: Maybe Rim}
+    deriving stock (Eq, Show)
+
+data Shadow = Shadow {color :: Color, alpha :: Double, offset :: Vec, softness :: Double}
+    deriving stock (Eq, Show)
+
+data Rim = Rim {color :: Color, alpha :: Double, thickness :: Double, turn :: Angle}
+    deriving stock (Eq, Show)
+
+fadeFrom :: Value -> Either Text Double
+fadeFrom = ranged Prelude.id 0 1 "expected an opacity from 0 to 1"
+
+effectsFrom :: Value -> Either Text (Maybe Effects)
+effectsFrom = \case
+    Null -> Right Nothing
+    v -> do
+        o <- asObject v
+        sh <- field "shadow" (orNull (asObject >=> \x -> Shadow <$> field "color" colorFrom x <*> field "opacity" fadeFrom x <*> field "offset" vecFrom x <*> field "blur" (ranged Prelude.id 0 200 "expected a blur from 0 to 200 pixels") x)) o
+        ri <- field "rim" (orNull (asObject >=> \x -> Rim <$> field "color" colorFrom x <*> field "opacity" fadeFrom x <*> field "width" (ranged Prelude.id 0 200 "expected a width from 0 to 200 pixels") x <*> field "angle" angleFrom x)) o
+        Right (Just (Effects sh ri))
+    where
+        orNull f = \case
+            Null -> Right Nothing
+            x -> Just <$> f x
+
+effectsValue :: Effects -> Value
+effectsValue e =
+    object
+        ( maybe [] (\x -> ["shadow" .= object ["color" .= colorValue x.color, "opacity" .= number x.alpha, "offset" .= vecValue x.offset, "blur" .= number x.softness]]) e.shadow
+            <> maybe [] (\x -> let Angle a = x.turn in ["rim" .= object ["color" .= colorValue x.color, "opacity" .= number x.alpha, "width" .= number x.thickness, "angle" .= number a]]) e.rim
+        )
+
+-- | A light: a soft radial pool or a linear band of colour, blended by the layer's blend.
+data Light = Light {shape :: LightShape, color :: Color, intensity :: Double, center :: Vec, radius :: Double, turn :: Angle, softness :: Double}
+    deriving stock (Eq, Show)
+
+data LightShape = RadialLight | LinearLight
+    deriving stock (Bounded, Enum, Eq, Show)
+
+lightShapeName :: LightShape -> Text
+lightShapeName = \case
+    RadialLight -> "radial"
+    LinearLight -> "linear"
+
+lightFrom :: Value -> Either Text Light
+lightFrom =
+    asObject >=> \o ->
+        Light
+            <$> field "shape" (oneOf lightShapeName "expected a light shape of \"radial\" or \"linear\"") o
+            <*> field "color" colorFrom o
+            <*> field "intensity" (ranged Prelude.id 0 1 "expected an intensity from 0 to 1") o
+            <*> field "center" vecFrom o
+            <*> field "radius" (ranged Prelude.id 1 200000 "expected a radius from 1 to 200000 pixels") o
+            <*> field "angle" angleFrom o
+            <*> field "softness" (ranged Prelude.id 0 1 "expected a softness from 0 to 1") o
+
+lightValue :: Light -> Value
+lightValue l =
+    let
+        Angle a = l.turn
+    in
+        object ["shape" .= lightShapeName l.shape, "color" .= colorValue l.color, "intensity" .= number l.intensity, "center" .= vecValue l.center, "radius" .= number l.radius, "angle" .= number a, "softness" .= number l.softness]
 
 -- | How a layer mixes with the layers under it; on the wire only when not normal.
 data Blend = Normal | Multiply | Screen | Overlay | Add | Darken | Lighten
@@ -991,20 +1063,23 @@ data Layer
       DrawingLayer LayerLook Bool (NonEmpty Cel) (Maybe Rig)
     | -- | An image or video to trace over; shown in the editor, never exported.
       ReferenceLayer LayerLook AssetId Media
+    | -- | A light over the layers under it (or, clipped, over the one below).
+      LightLayer LayerLook Light
     deriving stock (Eq, Show)
 
-data LayerKind = KDrawing | KReference
+data LayerKind = KDrawing | KReference | KLight
     deriving stock (Bounded, Enum, Eq)
 
 layerKindName :: LayerKind -> Text
 layerKindName = \case
     KDrawing -> "drawing"
     KReference -> "reference"
+    KLight -> "light"
 
 layerFrom :: Value -> Either Text Layer
 layerFrom =
     asObject >=> \o -> do
-        kind <- field "kind" (oneOf layerKindName "expected a layer kind of \"drawing\" or \"reference\"") o
+        kind <- field "kind" (oneOf layerKindName "expected a layer kind of \"drawing\", \"reference\" or \"light\"") o
         look <-
             LayerLook
                 <$> field "id" layerIdFrom o
@@ -1015,9 +1090,12 @@ layerFrom =
                 <*> field "blend" blendFrom o
                 <*> field "clip" optionalBool o
                 <*> field "motion" motionFrom o
+                <*> field "depth" depthFrom o
+                <*> field "effects" effectsFrom o
         case kind of
             KDrawing -> DrawingLayer look <$> field "holdLast" boolFrom o <*> field "cels" (celsFrom "cels" celV3From) o <*> field "rig" rigFrom o
             KReference -> ReferenceLayer look <$> field "asset" assetIdFrom o <*> field "media" (oneOf mediaName "expected media of \"image\" or \"video\"") o
+            KLight -> LightLayer look <$> field "light" lightFrom o
 
 layerValue :: Layer -> Value
 layerValue l = object (look <> rest)
@@ -1025,6 +1103,7 @@ layerValue l = object (look <> rest)
         (kind, lk, rest) = case l of
             DrawingLayer x holdLast cels rig -> ("drawing" :: Text, x, ["holdLast" .= holdLast, "cels" .= map celValue (NonEmpty.toList cels)] <> maybe [] (\r -> ["rig" .= rigValue r]) rig)
             ReferenceLayer x (AssetId a) m -> ("reference", x, ["asset" .= a, "media" .= mediaName m])
+            LightLayer x li -> ("light", x, ["light" .= lightValue li])
         LayerId lid = lk.layerId
         Label nm = lk.label
         Opacity op = lk.opacity
@@ -1033,11 +1112,14 @@ layerValue l = object (look <> rest)
                 <> ["blend" .= blendName lk.blend | lk.blend /= Normal]
                 <> ["clip" .= True | lk.clip]
                 <> maybe [] (\m -> ["motion" .= motionValue m]) lk.motion
+                <> ["depth" .= number lk.depth | lk.depth /= 1]
+                <> maybe [] (\e -> ["effects" .= effectsValue e]) lk.effects
 
 lookOf :: Layer -> LayerLook
 lookOf = \case
     DrawingLayer x _ _ _ -> x
     ReferenceLayer x _ _ -> x
+    LightLayer x _ -> x
 
 -- Camera --------------------------------------------------------------------------------
 
@@ -1057,7 +1139,21 @@ easeName = \case
     EaseOut -> "out"
     EaseInOut -> "inOut"
 
-data CameraKey = CameraKey {frame :: Int, center :: Vec, zoom :: Double, turn :: Angle, ease :: Ease}
+data CameraKey = CameraKey
+    { frame :: Int
+    , center :: Vec
+    , zoom :: Double
+    , turn :: Angle
+    , ease :: Ease
+    , shake :: Double
+    -- ^ Pixels of handheld shake from this key to the next; 0 is steady.
+    , focus :: Double
+    -- ^ The depth in focus, and how much the others blur per unit of depth away.
+    , aperture :: Double
+    , tint :: Maybe Color
+    -- ^ A colour over the whole frame (time of day, mood), and how much of it.
+    , tintAmount :: Double
+    }
     deriving stock (Eq, Show)
 
 frameIndexFrom :: Value -> Either Text Int
@@ -1072,9 +1168,29 @@ cameraKeyFrom =
             <*> field "zoom" (ranged Prelude.id 0.1 10 "expected a zoom from 0.1 to 10") o
             <*> field "rotation" angleFrom o
             <*> field "ease" (oneOf easeName "expected an ease of \"linear\", \"in\", \"out\" or \"inOut\"") o
+            <*> field "shake" (orZero (ranged Prelude.id 0 200 "expected a shake from 0 to 200 pixels")) o
+            <*> field "focus" depthFrom o
+            <*> field "aperture" (orZero (ranged Prelude.id 0 50 "expected an aperture from 0 to 50")) o
+            <*> field "tint" (\case Null -> Right Nothing; v -> Just <$> colorFrom v) o
+            <*> field "tintAmount" (orZero fadeFrom) o
+    where
+        orZero f = \case
+            Null -> Right 0
+            v -> f v
 
 cameraKeyValue :: CameraKey -> Value
-cameraKeyValue k = let Angle a = k.turn in object ["frame" .= k.frame, "center" .= vecValue k.center, "zoom" .= number k.zoom, "rotation" .= number a, "ease" .= easeName k.ease]
+cameraKeyValue k =
+    let
+        Angle a = k.turn
+    in
+        object
+            ( ["frame" .= k.frame, "center" .= vecValue k.center, "zoom" .= number k.zoom, "rotation" .= number a, "ease" .= easeName k.ease]
+                <> ["shake" .= number k.shake | k.shake /= 0]
+                <> ["focus" .= number k.focus | k.focus /= 1]
+                <> ["aperture" .= number k.aperture | k.aperture /= 0]
+                <> maybe [] (\c -> ["tint" .= colorValue c]) k.tint
+                <> ["tintAmount" .= number k.tintAmount | k.tintAmount /= 0]
+            )
 
 -- Audio ---------------------------------------------------------------------------------
 
@@ -1167,6 +1283,7 @@ isDrawingLayer :: Layer -> Bool
 isDrawingLayer = \case
     DrawingLayer {} -> True
     ReferenceLayer {} -> False
+    LightLayer {} -> False
 
 -- | Formats 1 and 2: one list of drawings, which becomes the first layer.
 firstLayer :: NonEmpty Cel -> Layer
@@ -1231,11 +1348,14 @@ restyleLayer li o p = do
     b <- given "blend" blendFrom lk.blend
     c <- given "clip" boolFrom lk.clip
     m <- given "motion" motionFrom lk.motion
+    d <- given "depth" depthFrom lk.depth
+    e <- given "effects" effectsFrom lk.effects
     let
-        lk' = lk {blend = b, clip = c, motion = m}
-        l' = case l of
-            DrawingLayer _ holdLast cels rig -> DrawingLayer lk' holdLast cels rig
-            ReferenceLayer _ a media -> ReferenceLayer lk' a media
+        lk' = lk {blend = b, clip = c, motion = m, depth = d, effects = e}
+    l' <- case l of
+        DrawingLayer _ holdLast cels rig -> Right (DrawingLayer lk' holdLast cels rig)
+        ReferenceLayer _ a media -> Right (ReferenceLayer lk' a media)
+        LightLayer _ lit -> LightLayer lk' <$> given "light" lightFrom lit
     layers' <- nonEmpty "expected a layer" [if i == li then l' else x | (i, x) <- zip [0 ..] ls]
     checked p {layers = layers'}
 
@@ -1266,6 +1386,7 @@ layersSummary p =
             (kind, extra) = case l of
                 DrawingLayer _ holdLast cels rig -> ("drawing" :: Text, ["drawings" .= length cels, "holdLast" .= holdLast, "rigged" .= isJust rig])
                 ReferenceLayer {} -> ("reference", [])
+                LightLayer {} -> ("light", [])
         ]
     where
         toJSONList = Array . Vector.fromList

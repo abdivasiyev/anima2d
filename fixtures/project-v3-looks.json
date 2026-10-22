@@ -73,7 +73,8 @@
       }
      ]
     }
-   ]
+   ],
+   "depth": 4
   },
   {
    "kind": "drawing",
@@ -163,6 +164,24 @@
       "ease": "linear"
      }
     ]
+   },
+   "depth": 0.6,
+   "effects": {
+    "shadow": {
+     "color": "#1c1c1e",
+     "opacity": 0.4,
+     "offset": [
+      12,
+      18
+     ],
+     "blur": 8
+    },
+    "rim": {
+     "color": "#ffd27a",
+     "opacity": 0.8,
+     "width": 6,
+     "angle": -0.8
+    }
    }
   },
   {
@@ -203,6 +222,27 @@
      ]
     }
    ]
+  },
+  {
+   "kind": "light",
+   "id": "sun",
+   "name": "Sun",
+   "visible": true,
+   "locked": false,
+   "opacity": 1,
+   "blend": "add",
+   "light": {
+    "shape": "radial",
+    "color": "#ffcf8a",
+    "intensity": 0.6,
+    "center": [
+     1500,
+     200
+    ],
+    "radius": 700,
+    "angle": 0,
+    "softness": 0.9
+   }
   }
  ],
  "camera": [
@@ -214,7 +254,12 @@
    ],
    "zoom": 1,
    "rotation": 0,
-   "ease": "inOut"
+   "ease": "inOut",
+   "shake": 4,
+   "focus": 0.6,
+   "aperture": 3,
+   "tint": "#ff9a5c",
+   "tintAmount": 0.25
   },
   {
    "frame": 12,

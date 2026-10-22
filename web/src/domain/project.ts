@@ -799,6 +799,61 @@ const unparseMotion = (m: Motion): unknown => ({
   keys: m.keys.map((k) => ({ frame: k.frame, position: [k.position[0], k.position[1]], scale: k.scale, rotation: k.rotation, opacity: k.opacity, ease: k.ease })),
 });
 
+/** How far from the camera a layer is, for parallax: 1 is the canvas plane, more is farther. */
+export type Depth = Brand<number, "Depth">;
+
+const depthOf = (n: number): Result<Depth> => (n >= 0.2 && n <= 20 ? ok(brandChecked<number, "Depth">(n)) : err("expected a depth from 0.2 to 20 (1 is the canvas plane)"));
+export const parseDepth = (raw: unknown): Result<Depth> => (raw === undefined || raw === null ? depthOf(1) : andThen(number(raw), depthOf));
+
+const ranged = <B extends string>(lo: number, hi: number, expected: string) => (raw: unknown): Result<Brand<number, B>> =>
+  andThen(number(raw), (n) => (n >= lo && n <= hi ? ok(brandChecked<number, B>(n)) : err(expected)));
+
+/** Pixels: a blur, a rim's width, a shake. */
+export type Pixels = Brand<number, "Pixels">;
+const parseBlurPx = ranged<"Pixels">(0, 200, "expected a blur from 0 to 200 pixels");
+const parseWidthPx = ranged<"Pixels">(0, 200, "expected a width from 0 to 200 pixels");
+
+/** A shadow under the drawings: their shape in a colour, moved and softened. */
+export type Shadow = Brand<{ readonly color: Color; readonly opacity: Fade; readonly offset: Vec; readonly blur: Pixels }, "Shadow">;
+/** A light on the drawings' edge facing `angle` (radians, 0 is from the right). */
+export type Rim = Brand<{ readonly color: Color; readonly opacity: Fade; readonly width: Pixels; readonly angle: Angle }, "Rim">;
+/** Effects that follow the drawings on every frame. */
+export type Effects = Brand<{ readonly shadow: Shadow | null; readonly rim: Rim | null }, "Effects">;
+
+export const makeShadow = (color: Color, opacity: Fade, offset: Vec, blur: Pixels): Shadow => brandChecked({ color, opacity, offset, blur });
+export const makeRim = (color: Color, opacity: Fade, width: Pixels, angle: Angle): Rim => brandChecked({ color, opacity, width, angle });
+export const makeEffects = (shadow: Shadow | null, rim: Rim | null): Effects => brandChecked({ shadow, rim });
+export const parsePixels = (lo: number, hi: number, expected: string): ((raw: unknown) => Result<Pixels>) => ranged<"Pixels">(lo, hi, expected);
+
+const orNull = <T>(parse: (raw: unknown) => Result<T>) => (raw: unknown): Result<T | null> => (raw === undefined || raw === null ? ok(null) : parse(raw));
+
+const parseShadow = (v: unknown): Result<Shadow> =>
+  parseWith(function* () {
+    const x = yield* bind(object(v));
+    return ok(makeShadow(yield* field(x, "color", parseColor), yield* field(x, "opacity", parseFade), yield* field(x, "offset", parseVec), yield* field(x, "blur", parseBlurPx)));
+  });
+
+const parseRim = (v: unknown): Result<Rim> =>
+  parseWith(function* () {
+    const x = yield* bind(object(v));
+    return ok(makeRim(yield* field(x, "color", parseColor), yield* field(x, "opacity", parseFade), yield* field(x, "width", parseWidthPx), yield* field(x, "angle", parseAngle)));
+  });
+
+const parseEffects = (raw: unknown): Result<Effects | null> =>
+  raw === undefined || raw === null
+    ? ok(null)
+    : parseWith(function* () {
+        const o = yield* bind(object(raw));
+        const shadow = yield* field(o, "shadow", orNull(parseShadow));
+        const rim = yield* field(o, "rim", orNull(parseRim));
+        return ok(makeEffects(shadow, rim));
+      });
+
+const unparseEffects = (e: Effects): unknown => ({
+  ...(e.shadow === null ? {} : { shadow: { color: e.shadow.color, opacity: e.shadow.opacity, offset: [e.shadow.offset[0], e.shadow.offset[1]], blur: e.shadow.blur } }),
+  ...(e.rim === null ? {} : { rim: { color: e.rim.color, opacity: e.rim.opacity, width: e.rim.width, angle: e.rim.angle } }),
+});
+
 /** What every layer has: an id, a name, and how it shows. */
 export interface LookFields {
   readonly id: LayerId;
@@ -810,10 +865,12 @@ export interface LookFields {
   /** Drawn only where the layers it clips to (the nearest unclipped one below) are. */
   readonly clip: boolean;
   readonly motion: Motion | null;
+  readonly depth: Depth;
+  readonly effects: Effects | null;
 }
 
 /** A new layer's look apart from its id and name. */
-export const PLAIN_LOOK = { visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), blend: "normal", clip: false, motion: null } as const;
+export const PLAIN_LOOK = { visible: true, locked: false, opacity: brandChecked<number, "Opacity">(1), blend: "normal", clip: false, motion: null, depth: brandChecked<number, "Depth">(1), effects: null } as const;
 
 /** Drawings on a timeline. `holdLast` keeps the last one showing to the end (backgrounds). */
 export interface DrawingLayerFields extends LookFields {
@@ -831,7 +888,53 @@ export interface ReferenceLayerFields extends LookFields {
   readonly media: Media;
 }
 
-export type LayerFields = DrawingLayerFields | ReferenceLayerFields;
+export const LIGHT_SHAPES = ["radial", "linear"] as const;
+export type LightShape = (typeof LIGHT_SHAPES)[number];
+
+/** A light: a soft radial pool or a linear band of colour, blended by the layer's blend. */
+export type Light = Brand<
+  {
+    readonly shape: LightShape;
+    readonly color: Color;
+    readonly intensity: Fade;
+    readonly center: Vec;
+    readonly radius: Pixels;
+    /** Which way a linear band falls off. */
+    readonly angle: Angle;
+    /** 0 a hard edge, 1 a fall-off all the way from the middle. */
+    readonly softness: Fade;
+  },
+  "Light"
+>;
+
+export const makeLight = (shape: LightShape, color: Color, intensity: Fade, center: Vec, radius: Pixels, angle: Angle, softness: Fade): Light =>
+  brandChecked({ shape, color, intensity, center, radius, angle, softness });
+
+export const parseLight = (raw: unknown): Result<Light> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    return ok(
+      makeLight(
+        yield* field(o, "shape", oneOf(LIGHT_SHAPES, 'expected a light shape of "radial" or "linear"')),
+        yield* field(o, "color", parseColor),
+        yield* field(o, "intensity", ranged<"Fade">(0, 1, "expected an intensity from 0 to 1")),
+        yield* field(o, "center", parseVec),
+        yield* field(o, "radius", ranged<"Pixels">(1, 200000, "expected a radius from 1 to 200000 pixels")),
+        yield* field(o, "angle", parseAngle),
+        yield* field(o, "softness", ranged<"Fade">(0, 1, "expected a softness from 0 to 1")),
+      ),
+    );
+  });
+
+export const unparseLight = (l: Light): unknown => ({ shape: l.shape, color: l.color, intensity: l.intensity, center: [l.center[0], l.center[1]], radius: l.radius, angle: l.angle, softness: l.softness });
+
+/** A light over the layers under it (or, clipped, over the one below). */
+export interface LightLayerFields extends LookFields {
+  readonly kind: "light";
+  readonly light: Light;
+}
+
+export type LayerFields = DrawingLayerFields | ReferenceLayerFields | LightLayerFields;
 export type Layer = Brand<LayerFields, "Layer">;
 export type DrawingLayer = Brand<DrawingLayerFields, "Layer">;
 
@@ -850,7 +953,7 @@ const parseCels = (parseCel: (raw: unknown) => Result<Cel>, what = "cels") => (r
 export const parseLayer = (raw: unknown): Result<Layer> =>
   parseWith(function* () {
     const o = yield* bind(object(raw));
-    const kind = yield* field(o, "kind", oneOf(["drawing", "reference"] as const, 'expected a layer kind of "drawing" or "reference"'));
+    const kind = yield* field(o, "kind", oneOf(["drawing", "reference", "light"] as const, 'expected a layer kind of "drawing", "reference" or "light"'));
     const id = yield* field(o, "id", parseLayerId);
     const name = yield* field(o, "name", parseLabel);
     const visible = yield* field(o, "visible", parseBool);
@@ -859,7 +962,10 @@ export const parseLayer = (raw: unknown): Result<Layer> =>
     const blend = yield* field(o, "blend", parseBlend);
     const clip = yield* field(o, "clip", parseOptionalBool);
     const motion = yield* field(o, "motion", parseMotion);
-    const look = { id, name, visible, locked, opacity, blend, clip, motion };
+    const depth = yield* field(o, "depth", parseDepth);
+    const effects = yield* field(o, "effects", parseEffects);
+    const look = { id, name, visible, locked, opacity, blend, clip, motion, depth, effects };
+    if (kind === "light") return makeLayer({ kind, ...look, light: yield* field(o, "light", parseLight) });
     if (kind === "drawing") {
       const holdLast = yield* field(o, "holdLast", parseBool);
       const cels = yield* field(o, "cels", parseCels(parseCelV3));
@@ -881,6 +987,8 @@ const unparseLook = (l: Layer): Record<string, unknown> => ({
   ...(l.blend === "normal" ? {} : { blend: l.blend }),
   ...(l.clip ? { clip: true } : {}),
   ...(l.motion === null ? {} : { motion: unparseMotion(l.motion) }),
+  ...(l.depth === 1 ? {} : { depth: l.depth }),
+  ...(l.effects === null ? {} : { effects: unparseEffects(l.effects) }),
 });
 
 const unparseLayer = (l: Layer): unknown =>
@@ -891,7 +999,9 @@ const unparseLayer = (l: Layer): unknown =>
         cels: l.cels.map((c) => ({ hold: c.hold, mark: c.mark, items: c.items.map(unparseItem), ...(c.pose === null ? {} : { pose: unparsePose(c.pose) }) })),
         ...(l.rig === null ? {} : { rig: unparseRig(l.rig) }),
       }
-    : { ...unparseLook(l), asset: l.asset, media: l.media };
+    : l.kind === "light"
+      ? { ...unparseLook(l), light: unparseLight(l.light) }
+      : { ...unparseLook(l), asset: l.asset, media: l.media };
 
 // Camera --------------------------------------------------------------------------------
 
@@ -914,8 +1024,30 @@ export type Zoom = Brand<number, "Zoom">;
 export const parseZoom = (raw: unknown): Result<Zoom> =>
   andThen(number(raw), (n) => (n >= 0.1 && n <= 10 ? ok(brandChecked<number, "Zoom">(n)) : err("expected a zoom from 0.1 to 10")));
 
+/** The camera's extras at a key, each eased into the next: handheld shake, depth of field, a colour over the frame. */
+export interface CameraLook {
+  /** Pixels of shake; 0 is steady. */
+  readonly shake: Pixels;
+  /** The depth in focus, and how much the others blur per unit of depth away (0 is all sharp). */
+  readonly focus: Depth;
+  readonly aperture: Pixels;
+  /** A colour over the whole frame (time of day, mood), and how much of it. */
+  readonly tint: Color | null;
+  readonly tintAmount: Fade;
+}
+
+export const PLAIN_CAMERA: CameraLook = {
+  shake: brandChecked<number, "Pixels">(0),
+  focus: brandChecked<number, "Depth">(1),
+  aperture: brandChecked<number, "Pixels">(0),
+  tint: null,
+  tintAmount: brandChecked<number, "Fade">(0),
+};
+
 /** Where the camera looks at a frame: its centre on the canvas, zoom and turn, and how it eases into the next key. */
-export type CameraKey = Brand<{ readonly frame: FrameIndex; readonly center: Vec; readonly zoom: Zoom; readonly rotation: Angle; readonly ease: Ease }, "CameraKey">;
+export type CameraKey = Brand<{ readonly frame: FrameIndex; readonly center: Vec; readonly zoom: Zoom; readonly rotation: Angle; readonly ease: Ease } & CameraLook, "CameraKey">;
+
+const orZero = <B extends string>(lo: number, hi: number, expected: string) => (raw: unknown): Result<Brand<number, B>> => (raw === undefined || raw === null ? ok(brandChecked<number, B>(0)) : ranged<B>(lo, hi, expected)(raw));
 
 export const parseCameraKey = (raw: unknown): Result<CameraKey> =>
   parseWith(function* () {
@@ -925,10 +1057,29 @@ export const parseCameraKey = (raw: unknown): Result<CameraKey> =>
     const zoom = yield* field(o, "zoom", parseZoom);
     const rotation = yield* field(o, "rotation", parseAngle);
     const ease = yield* field(o, "ease", parseEase);
-    return ok(brandChecked({ frame, center, zoom, rotation, ease }));
+    const shake = yield* field(o, "shake", orZero<"Pixels">(0, 200, "expected a shake from 0 to 200 pixels"));
+    const focus = yield* field(o, "focus", parseDepth);
+    const aperture = yield* field(o, "aperture", orZero<"Pixels">(0, 50, "expected an aperture from 0 to 50"));
+    const tint = yield* field(o, "tint", orNull(parseColor));
+    const tintAmount = yield* field(o, "tintAmount", orZero<"Fade">(0, 1, "expected an opacity from 0 to 1"));
+    return ok(brandChecked({ frame, center, zoom, rotation, ease, shake, focus, aperture, tint, tintAmount }));
   });
 
-export const makeCameraKey = (frame: FrameIndex, center: Vec, zoom: Zoom, rotation: Angle, ease: Ease): CameraKey => brandChecked({ frame, center, zoom, rotation, ease });
+export const makeCameraKey = (frame: FrameIndex, center: Vec, zoom: Zoom, rotation: Angle, ease: Ease, look: CameraLook = PLAIN_CAMERA): CameraKey =>
+  brandChecked({ frame, center, zoom, rotation, ease, ...look });
+
+const unparseCameraKey = (k: CameraKey): unknown => ({
+  frame: k.frame,
+  center: [k.center[0], k.center[1]],
+  zoom: k.zoom,
+  rotation: k.rotation,
+  ease: k.ease,
+  ...(k.shake === 0 ? {} : { shake: k.shake }),
+  ...(k.focus === 1 ? {} : { focus: k.focus }),
+  ...(k.aperture === 0 ? {} : { aperture: k.aperture }),
+  ...(k.tint === null ? {} : { tint: k.tint }),
+  ...(k.tintAmount === 0 ? {} : { tintAmount: k.tintAmount }),
+});
 
 // Audio ---------------------------------------------------------------------------------
 
@@ -1076,7 +1227,7 @@ export const unparseProject = (p: Project): unknown => ({
   canvas: { width: p.canvas.width, height: p.canvas.height },
   fps: p.fps,
   layers: p.layers.map(unparseLayer),
-  camera: p.camera.map((k) => ({ frame: k.frame, center: [k.center[0], k.center[1]], zoom: k.zoom, rotation: k.rotation, ease: k.ease })),
+  camera: p.camera.map(unparseCameraKey),
   audio: p.audio.map((a) => ({ id: a.id, asset: a.asset, name: a.name, offset: a.offset, volume: a.volume, muted: a.muted })),
   ...(p.palette.length === 0 ? {} : { palette: [...p.palette] }),
   ...(p.fonts.length === 0 ? {} : { fonts: p.fonts.map((f) => ({ family: f.family, asset: f.asset })) }),

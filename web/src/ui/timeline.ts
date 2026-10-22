@@ -123,7 +123,7 @@ export class Timeline {
       lock.addEventListener("click", () => {
         this.on.toggleLock(i);
       });
-      const title = h("button", { type: "button", class: "tl-name" }, layer.kind === "reference" ? icon("image") : null, h("span", {}, layer.name));
+      const title = h("button", { type: "button", class: "tl-name" }, layer.kind === "reference" ? icon("image") : layer.kind === "light" ? icon("light") : null, h("span", {}, layer.name));
       title.addEventListener("click", () => {
         if (isDrawing(layer)) this.on.selectCel(i, Math.min(m.layer === i ? m.cel : 0, layer.cels.length - 1), false);
       });
@@ -190,7 +190,7 @@ export class Timeline {
           lane.append(tail);
         }
       } else {
-        const band = h("div", { class: "ref-band" }, layer.media === "video" ? "Reference video" : "Reference image");
+        const band = h("div", { class: `ref-band${layer.kind === "light" ? " light" : ""}` }, layer.kind === "light" ? `Light · ${layer.light.shape}` : layer.media === "video" ? "Reference video" : "Reference image");
         band.style.width = `${width}px`;
         lane.append(band);
       }

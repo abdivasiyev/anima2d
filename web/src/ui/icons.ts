@@ -46,6 +46,10 @@ import {
   Frame,
   Hand,
   Blend,
+  Lightbulb,
+  Vibrate,
+  Focus,
+  SunDim,
   createElement,
   Eraser,
   Layers,
@@ -122,6 +126,10 @@ export const ICONS = {
   safe: Frame,
   trace: Hand,
   blend: Blend,
+  light: Lightbulb,
+  shake: Vibrate,
+  focus: Focus,
+  tint: SunDim,
 } satisfies Record<string, IconNode>;
 
 export type IconName = keyof typeof ICONS;
