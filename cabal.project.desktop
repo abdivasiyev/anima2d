@@ -1,0 +1,3 @@
+-- The server and the desktop editor together (the desktop needs GTK3):
+--   nix develop .#desktop -c cabal --project-file=cabal.project.desktop build anima2d-desktop
+packages: . desktop

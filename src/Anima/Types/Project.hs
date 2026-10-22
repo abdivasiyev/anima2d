@@ -17,8 +17,41 @@ field reads as @null@ and is refused by that field's own parser, so the first re
 and its words are the same on both sides.
 -}
 module Anima.Types.Project
-    ( -- * Identity
-      ProjectId
+    ( -- * Views (read only, for renderers)
+      ProjectView (..)
+    , LayerView (..)
+    , LayerKindView (..)
+    , CelView (..)
+    , ItemView (..)
+    , StrokeView (..)
+    , EraseView (..)
+    , ScatterView (..)
+    , ShapeView (..)
+    , CurveView (..)
+    , FillView (..)
+    , TextView (..)
+    , ImageView (..)
+    , MotionView (..)
+    , MotionKeyView (..)
+    , ShadowView (..)
+    , RimView (..)
+    , LightView (..)
+    , CameraKeyView (..)
+    , viewProject
+    , Plane (..)
+    , Brush (..)
+    , Scatter (..)
+    , ShapeKind (..)
+    , TextStyle (..)
+    , Align (..)
+    , Blend (..)
+    , Ease (..)
+    , LightShape (..)
+    , Mark (..)
+    , Media (..)
+
+      -- * Identity
+    , ProjectId
     , ProjectName
 
       -- * Settings
@@ -1615,3 +1648,210 @@ instance Parse ProjectSummary where
                 , frameCount = s.frameCount
                 , revision = Just (unparse s.revision)
                 }
+
+-- Views ----------------------------------------------------------------------------------
+
+{- $views
+What a renderer needs to know about a parsed project, in plain numbers and text: built only
+from a 'Project' by 'viewProject', never the other way, so it cannot be used to make an
+invalid project. The desktop editor draws from it; to change a project it builds JSON and
+parses it, like every other writer.
+-}
+
+type XY = (Double, Double)
+
+data StrokeView = StrokeView {plane :: Plane, brush :: Brush, color :: Text, size :: Double, opacity :: Double, points :: [(Double, Double, Double)]}
+    deriving stock (Eq, Show)
+
+data EraseView = EraseView {size :: Double, points :: [(Double, Double, Double)]}
+    deriving stock (Eq, Show)
+
+data ScatterView = ScatterView {plane :: Plane, brush :: Scatter, color :: Text, size :: Double, opacity :: Double, seed :: Int, points :: [(Double, Double, Double)]}
+    deriving stock (Eq, Show)
+
+data ShapeView = ShapeView {plane :: Plane, shape :: ShapeKind, color :: Text, size :: Double, opacity :: Double, fill :: Maybe Text, center :: XY, width :: Double, height :: Double, rotation :: Double}
+    deriving stock (Eq, Show)
+
+data CurveView = CurveView {plane :: Plane, color :: Text, size :: Double, opacity :: Double, start :: XY, control :: XY, end :: XY}
+    deriving stock (Eq, Show)
+
+data FillView = FillView {plane :: Plane, color :: Text, opacity :: Double, polygons :: [[XY]]}
+    deriving stock (Eq, Show)
+
+data TextView = TextView {plane :: Plane, text :: Text, font :: Text, style :: TextStyle, fontSize :: Double, align :: Align, color :: Text, opacity :: Double, center :: XY, rotation :: Double}
+    deriving stock (Eq, Show)
+
+data ImageView = ImageView {plane :: Plane, asset :: Text, opacity :: Double, center :: XY, width :: Double, height :: Double, rotation :: Double, mirrored :: Bool}
+    deriving stock (Eq, Show)
+
+data ItemView
+    = StrokeV StrokeView
+    | EraseV EraseView
+    | ScatterV ScatterView
+    | ShapeV ShapeView
+    | CurveV CurveView
+    | FillV FillView
+    | TextV TextView
+    | ImageV ImageView
+    deriving stock (Eq, Show)
+
+data CelView = CelView {hold :: Int, mark :: Mark, items :: [ItemView]}
+    deriving stock (Eq, Show)
+
+data MotionKeyView = MotionKeyView {frame :: Int, position :: XY, scale :: Double, rotation :: Double, opacity :: Double, ease :: Ease}
+    deriving stock (Eq, Show)
+
+data MotionView = MotionView {pivot :: XY, keys :: [MotionKeyView]}
+    deriving stock (Eq, Show)
+
+data ShadowView = ShadowView {color :: Text, opacity :: Double, offset :: XY, blur :: Double}
+    deriving stock (Eq, Show)
+
+data RimView = RimView {color :: Text, opacity :: Double, width :: Double, angle :: Double}
+    deriving stock (Eq, Show)
+
+data LightView = LightView {shape :: LightShape, color :: Text, intensity :: Double, center :: XY, radius :: Double, angle :: Double, softness :: Double}
+    deriving stock (Eq, Show)
+
+-- | What kind of layer: drawings (held to the end or not), a reference picture, or a light.
+data LayerKindView
+    = DrawingView Bool [CelView]
+    | ReferenceView Text Media
+    | LightLayerView LightView
+    deriving stock (Eq, Show)
+
+data LayerView = LayerView
+    { layerId :: Text
+    , name :: Text
+    , visible :: Bool
+    , locked :: Bool
+    , opacity :: Double
+    , mixing :: Blend
+    , clipped :: Bool
+    , distance :: Double
+    , motion :: Maybe MotionView
+    , shadow :: Maybe ShadowView
+    , rim :: Maybe RimView
+    , kind :: LayerKindView
+    }
+    deriving stock (Eq, Show)
+
+data CameraKeyView = CameraKeyView
+    { frame :: Int
+    , center :: XY
+    , zoom :: Double
+    , rotation :: Double
+    , ease :: Ease
+    , shake :: Double
+    , focus :: Double
+    , aperture :: Double
+    , tint :: Maybe Text
+    , tintAmount :: Double
+    }
+    deriving stock (Eq, Show)
+
+data ProjectView = ProjectView
+    { projectKey :: Text
+    , title :: Text
+    , width :: Int
+    , height :: Int
+    , rate :: Int
+    , stack :: [LayerView]
+    , shots :: [CameraKeyView]
+    , colours :: [Text]
+    , fontFiles :: [(Text, Text)]
+    }
+    deriving stock (Eq, Show)
+
+viewProject :: Project -> ProjectView
+viewProject p =
+    ProjectView
+        { projectKey = unparse p.id
+        , title = unparse p.name
+        , width = w
+        , height = h
+        , rate = fpsValue p.fps
+        , stack = map viewLayer (NonEmpty.toList p.layers)
+        , shots = map viewCamera p.camera
+        , colours = map colorText p.palette
+        , fontFiles = [(f.family, let AssetId a = f.fontAsset in a) | f <- p.fonts]
+        }
+    where
+        Canvas (Width w) (Height h) = p.canvas
+
+colorText :: Color -> Text
+colorText (Color c) = c
+
+vecXY :: Vec -> XY
+vecXY (Vec x y) = (x, y)
+
+angleOf :: Angle -> Double
+angleOf (Angle a) = a
+
+pointsOf :: NonEmpty Point -> [(Double, Double, Double)]
+pointsOf ps = [(x, y, pr) | Point x y (Pressure pr) <- NonEmpty.toList ps]
+
+viewItem :: Item -> ItemView
+viewItem = \case
+    Stroke s -> StrokeV StrokeView {plane = s.layer, brush = s.brush, color = colorText s.color, size = sz s.size, opacity = op s.opacity, points = pointsOf s.points}
+    Erase e -> EraseV EraseView {size = sz e.size, points = pointsOf e.points}
+    ScatterStroke s -> ScatterV ScatterView {plane = s.layer, brush = s.brush, color = colorText s.color, size = sz s.size, opacity = op s.opacity, seed = let Seed n = s.seed in n, points = pointsOf s.points}
+    Shape s ->
+        ShapeV
+            ShapeView
+                { plane = s.layer
+                , shape = s.shape
+                , color = colorText s.color
+                , size = sz s.size
+                , opacity = op s.opacity
+                , fill = colorText <$> s.fill
+                , center = vecXY s.center
+                , width = ext s.width
+                , height = ext s.height
+                , rotation = angleOf s.rotation
+                }
+    Curve c -> let (a, m, b) = c.points in CurveV CurveView {plane = c.layer, color = colorText c.color, size = sz c.size, opacity = op c.opacity, start = vecXY a, control = vecXY m, end = vecXY b}
+    Fill f -> FillV FillView {plane = f.layer, color = colorText f.color, opacity = op f.opacity, polygons = [map vecXY (NonEmpty.toList poly) | poly <- NonEmpty.toList f.polygons]}
+    TextBlock t -> TextV TextView {plane = t.layer, text = t.text, font = t.font, style = t.style, fontSize = t.fontSize, align = t.align, color = colorText t.color, opacity = op t.opacity, center = vecXY t.center, rotation = angleOf t.rotation}
+    Picture i -> ImageV ImageView {plane = i.layer, asset = let AssetId a = i.asset in a, opacity = op i.opacity, center = vecXY i.center, width = ext i.width, height = ext i.height, rotation = angleOf i.rotation, mirrored = i.mirrored}
+    where
+        sz (BrushSize x) = x
+        op (Opacity x) = x
+        ext (Extent x) = x
+
+viewLayer :: Layer -> LayerView
+viewLayer l =
+    LayerView
+        { layerId = let LayerId t = lk.layerId in t
+        , name = let Label t = lk.label in t
+        , visible = lk.visible
+        , locked = lk.locked
+        , opacity = let Opacity o = lk.opacity in o
+        , mixing = lk.blend
+        , clipped = lk.clip
+        , distance = lk.depth
+        , motion = (\m -> MotionView {pivot = vecXY m.pivot, keys = [MotionKeyView {frame = k.frame, position = vecXY k.position, scale = k.scale, rotation = angleOf k.turn, opacity = k.alpha, ease = k.ease} | k <- NonEmpty.toList m.keys]}) <$> lk.motion
+        , shadow = (\s -> ShadowView {color = colorText s.color, opacity = s.alpha, offset = vecXY s.offset, blur = s.softness}) <$> (lk.effects >>= (.shadow))
+        , rim = (\r -> RimView {color = colorText r.color, opacity = r.alpha, width = r.thickness, angle = angleOf r.turn}) <$> (lk.effects >>= (.rim))
+        , kind = case l of
+            DrawingLayer _ holdLast cels _ -> DrawingView holdLast [CelView {hold = n, mark = m, items = map viewItem is} | Cel (Hold n) m is _ <- NonEmpty.toList cels]
+            ReferenceLayer _ (AssetId a) media -> ReferenceView a media
+            LightLayer _ li -> LightLayerView LightView {shape = li.shape, color = colorText li.color, intensity = li.intensity, center = vecXY li.center, radius = li.radius, angle = angleOf li.turn, softness = li.softness}
+        }
+    where
+        lk = lookOf l
+
+viewCamera :: CameraKey -> CameraKeyView
+viewCamera k =
+    CameraKeyView
+        { frame = k.frame
+        , center = vecXY k.center
+        , zoom = k.zoom
+        , rotation = angleOf k.turn
+        , ease = k.ease
+        , shake = k.shake
+        , focus = k.focus
+        , aperture = k.aperture
+        , tint = colorText <$> k.tint
+        , tintAmount = k.tintAmount
+        }

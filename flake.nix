@@ -78,10 +78,12 @@
           '';
           meta.mainProgram = "anima2d";
         };
+        # The native editor (GTK3); built only when asked for, so the server's builds never need GTK.
+        desktop = hpkgs.callCabal2nix "anima2d-desktop" ./desktop {anima2d = backend;};
       in {
         packages = {
           default = anima2d;
-          inherit anima2d backend web;
+          inherit anima2d backend web desktop;
         };
 
         checks = {
@@ -114,6 +116,13 @@
             self.checks.${system}.pre-commit-check.enabledPackages
           ];
           shellHook = self.checks.${system}.pre-commit-check.shellHook;
+        };
+
+        devShells.desktop = hpkgs.shellFor {
+          name = "anima2d-desktop-shell";
+          packages = _: [backend desktop];
+          withHoogle = false;
+          nativeBuildInputs = [hpkgs.cabal-install hpkgs.fourmolu hpkgs.hlint pkgs.pkg-config];
         };
 
         formatter = pkgs.alejandra;

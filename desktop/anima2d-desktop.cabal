@@ -1,0 +1,52 @@
+cabal-version:      3.12
+name:               anima2d-desktop
+version:            0.1.0.0
+synopsis:           The anima2D editor as a native GTK3 application
+license:            Apache-2.0
+category:           Graphics
+build-type:         Simple
+
+common warnings
+    ghc-options:
+        -Wall
+        -Wincomplete-uni-patterns
+        -Wincomplete-record-updates
+        -Wmissing-export-lists
+        -Wpartial-fields
+        -Werror
+    default-language: GHC2024
+    default-extensions:
+        OverloadedStrings
+        OverloadedRecordDot
+        OverloadedLabels
+        DuplicateRecordFields
+        NoFieldSelectors
+        LambdaCase
+
+library
+    import:           warnings
+    exposed-modules:  Anima.Desktop.Freehand
+                    , Anima.Desktop.Random
+                    , Anima.Desktop.Draw
+                    , Anima.Desktop.Scene
+    hs-source-dirs:   src
+    build-depends:    base >=4.20 && <5
+                    , anima2d
+                    , containers
+                    , gi-cairo-render
+                    , gi-pango
+                    , gi-pangocairo
+                    , gi-cairo-connector
+                    , text
+
+executable anima2d-desktop
+    import:           warnings
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    ghc-options:      -threaded -rtsopts
+    build-depends:    base >=4.20 && <5
+                    , anima2d
+                    , anima2d-desktop
+                    , aeson
+                    , bytestring
+                    , containers
