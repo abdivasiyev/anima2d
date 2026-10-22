@@ -1,9 +1,8 @@
 name: Deploy
 
-# A push to main is checked, built and deployed in one job: the runner sits in the
-# server VM, so the build lands in the same store the service runs from. The deploy
-# socket (server the host configuration) switches the profile and rolls back by
-# itself if /healthz does not answer.
+# A push to main is checked, built and deployed in one job: the runner sits on the host
+# the service runs on, so the build lands in the same Nix store. The host's deploy socket
+# switches the profile and rolls back by itself if /healthz does not answer.
 on:
     push:
         branches: [main]

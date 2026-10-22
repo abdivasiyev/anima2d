@@ -1,6 +1,6 @@
 // anima2D's service worker: the app opens even when the server is out of reach.
 //
-// Pages: network first, the cached copy when the network fails or the tunnel answers for
+// Pages: network first, the cached copy when the network fails or a proxy answers for
 // a server it cannot reach (a proxy's 5xx). Built assets: their names carry a content
 // hash, so a cached one is always right. The API is never cached here: projects live in
 // the editor's own device storage (local.ts), which knows about revisions.

@@ -157,8 +157,8 @@ to resize it.
 | `GET` | `/api/renders` | Render statuses |
 | `GET` | `/api/renders/:id/video` | The finished video (MP4, or a ProRes .mov) |
 
-The server has no login of its own; put it behind a single sign-on gate (at
-example.com, Caddy asks an OAuth2 proxy first).
+The server has no login of its own; put it behind a single sign-on proxy (for example
+your reverse proxy asking an OAuth2 proxy before every request).
 
 ## MCP
 
@@ -169,29 +169,32 @@ effects, light), `add_light`, `set_camera` (keys with shake, depth of field and 
 `preview` (a frame as a PNG the model can see, drawn by the Mac's render agent), `undo` and
 `redo` (over the last 100 saved versions), and `item_format`, the reference of the item and motion JSON with examples. Items go through the same parser as the editor's saves, so a mistake
 comes back as the exact rejection; writes are revisioned, so an open editor shows them.
-On the server it is `https://example.com/anima2d/mcp`, behind a sign-in gate.
+It listens on loopback only; publish it behind the same kind of sign-in gate as the editor.
 
 ## The render agent
 
-the server has no GPU, so renders run on the Mac. The server writes a job into
-`renders/queue` under the projects folder, which the VM and the Mac share; the agent draws
-each frame with the editor's own renderer (on Skia), pipes it to ffmpeg's VideoToolbox
-encoder, and leaves the video in `renders/done`.
+Video renders and MCP previews can run on a Mac, using its GPU, when the server has none.
+The server writes a job into `renders/queue` under the projects folder, which the server
+and the Mac share (a network or synced folder); the agent draws each frame with the
+editor's own renderer (on Skia), pipes it to ffmpeg's VideoToolbox encoder, and leaves the
+video in `renders/done`.
 
 ```sh
-cd render && npm install && npm run build && ./install.sh
+cd render && npm install && npm run build && ANIMA2D_DATA=/path/to/projects ./install.sh
 ```
 
 installs it as a LaunchAgent (`anima2d.render-agent`, logging to
-`~/Library/Logs/anima2d-render.log`). Re-run after changing the project format, so the agent
+`~/Library/Logs/anima2d-render.log`), watching the projects folder in `ANIMA2D_DATA`
+(default `~/anima2d/projects`). Re-run after changing the project format, so the agent
 parses what the editor writes.
 
 ## Deploying
 
-A push to `main` runs `.forgejo/workflows/deploy.yaml` on the host's Actions runner: it
-checks and builds the flake and hands the store path to the deploy socket the server sets
-up (`the host configuration`), which switches the profile and rolls back if
-`/healthz` does not answer.
+A push to `main` runs `.forgejo/workflows/deploy.yaml` on a self-hosted Actions runner on
+the server's host: it checks and builds the flake and hands the store path to a deploy
+socket on that host, which switches the profile and rolls back if `/healthz` does not
+answer. Any other way of running `anima2d serve` works too; the flake's package is the
+server with the built editor beside it.
 
 ## Licence
 

@@ -1,8 +1,8 @@
 /**
- * The render agent on the Mac.
+ * The render agent on a Mac.
  *
- * the server has no GPU; this Mac does. The server queues a render as a file in the
- * projects folder both can see (~/anima2d/projects/renders/queue). This agent picks
+ * The server may have no GPU; this Mac does. The server queues a render as a file in the
+ * projects folder both can see (<projects>/renders/queue, from ANIMA2D_DATA). This agent picks
  * it up, draws every frame with the editor's own renderer (on Skia), pipes the pixels to
  * ffmpeg's VideoToolbox encoder, and leaves the MP4 in renders/done with its progress in
  * renders/status. One render at a time.

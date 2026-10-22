@@ -1,9 +1,9 @@
 {-# LANGUAGE MultiWayIf #-}
 
-{- | The render queue for the Mac: videos encoded on its GPU, not on this VM.
+{- | The render queue for a Mac: videos encoded on its GPU, for a server that has none.
 
-the server has no GPU, so a render is handed to an agent on the Mac through the
-folder both can see (the projects directory is on the Mac mount): a job is a file in
+A render is handed to an agent on the Mac through the folder both can see (the projects
+directory, shared between them): a job is a file in
 @renders/queue@ holding a snapshot of the project and the preset; the agent moves it to
 @renders/working@, writes its progress to @renders/status@, and the video to
 @renders/done@. No network between the two, no credentials.

@@ -1,7 +1,7 @@
 {- | The HTTP side: the projects API and the editor's static files.
 
-Sign-in is not here. the host's single sign-on gate (a reverse proxy asking an OAuth2 proxy)
-stands in front of every request, so anything that reaches this server has already
+Sign-in is not here. A single sign-on gate in front (a reverse proxy asking an OAuth2
+proxy) stands before every request, so anything that reaches this server has already
 signed in.
 
 Saves are revisioned. A project is loaded with its revision (@X-Revision@); a save names

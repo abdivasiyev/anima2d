@@ -85,7 +85,7 @@ historyLimit :: Int
 historyLimit = 100
 
 {- | How long a caller waits for a save before hearing "nothing new": well inside Warp's
-and a proxy's timeouts, so the connection is never cut under it.
+and a proxy's timeouts in front, so the connection is never cut under it.
 -}
 changeWait :: Int
 changeWait = 20_000_000

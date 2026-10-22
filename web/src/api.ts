@@ -37,9 +37,9 @@ const request = async (path: string, init?: RequestInit): Promise<Reply<Raw>> =>
   } catch {
     return { kind: "offline" };
   }
-  // a proxy answers for a server it cannot reach (502, 503, 504, 52x, 530).
+  // A proxy in front answers for a server it cannot reach (502, 503, 504, 52x, 530).
   if (res.status >= 502 && res.status !== 501) return { kind: "offline" };
-  // The sign-in gate answers an expired session with a redirect to the sign-in provider.
+  // The sign-in gate answers an expired session with a redirect to its sign-in page.
   if (res.redirected || res.status === 401) return { kind: "error", error: "your session has expired; reload to sign in again" };
   let body: unknown = null;
   try {

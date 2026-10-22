@@ -1,8 +1,8 @@
 /**
  * The device's own copy of every project, in IndexedDB.
  *
- * Every edit lands here first, so nothing is lost when the server is out of reach (the
- * server has no power, the tunnel is down). What is stored is the wire JSON, and it is
+ * Every edit lands here first, so nothing is lost when the server is out of reach (it
+ * has no power, the network is down). What is stored is the wire JSON, and it is
  * parsed on the way out like anything else read from outside the program.
  */
 import { andThen, err, ok, type Result } from "./domain/result";

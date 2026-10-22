@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Install (or update) the render agent on this Mac as a LaunchAgent.
 #
-#   cd render && npm install && npm run build && ./install.sh
+#   cd render && npm install && npm run build && ANIMA2D_DATA=/path/to/projects ./install.sh
 #
+# ANIMA2D_DATA is the projects folder the server writes render jobs into, shared with this
+# Mac; it defaults to ~/anima2d/projects.
 # It runs as you (no sudo), starts at login, restarts if it stops, and logs to
 # ~/Library/Logs/anima2d-render.log. ffmpeg comes from nixpkgs and is kept as a GC root
 # beside the agent so a garbage collection cannot remove it from under a render.
@@ -39,7 +41,7 @@ cat > "$plist" <<PLIST
   <key>EnvironmentVariables</key>
   <dict>
     <key>ANIMA2D_FFMPEG</key><string>$ffmpeg</string>
-    <key>ANIMA2D_DATA</key><string>$HOME/anima2d/projects</string>
+    <key>ANIMA2D_DATA</key><string>${ANIMA2D_DATA:-$HOME/anima2d/projects}</string>
   </dict>
   <key>WorkingDirectory</key><string>$home</string>
   <key>RunAtLoad</key><true/>

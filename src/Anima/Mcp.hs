@@ -9,8 +9,7 @@ through, so a malformed item comes back as the exact rejection, and nothing inva
 reach a project. Writes go through 'modifyProject', so they are revisioned like the
 editor's saves: an editor that has the project open sees the change on its next poll.
 
-Published at @https://mcp.<domain>/anima2d/mcp@ behind a sign-in gate (server
-@the host configuration@); this listener is loopback only.
+This listener is loopback only; publish it behind a sign-in gate.
 -}
 module Anima.Mcp
     ( mcpApp
@@ -56,7 +55,7 @@ import Anima.Types.Project
     , setCamera
     )
 
--- | The tools that change a project; the server lists the same names for read-only agents.
+-- | The tools that change a project, so a gateway can keep read-only agents off them.
 writeTools :: [Text]
 writeTools = ["create_project", "add_items", "replace_items", "add_drawing", "add_layer", "set_layer", "undo", "redo", "add_light", "set_camera"]
 
