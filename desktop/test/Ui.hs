@@ -139,9 +139,11 @@ main = do
         state = w.inspect
     -- A project in a folder of its own, opened as from the list.
     b <- localBackend dir
-    w.connectTo (Local dir)
     made <- createProject b "UI test"
     pid <- either (\e -> putStrLn ("could not make the project: " <> Text.unpack e) >> exitFailure) pure made
+    w.connectTo (Local dir)
+    _ <- waitFor w 1500 (const False)
+    snapshot whole (shots </> "00-projects.png")
     w.openId pid
     opened <- waitFor w 5000 (\p -> isJust p.edited)
     check "the project opens" (isJust opened.edited) (Text.unpack opened.note)

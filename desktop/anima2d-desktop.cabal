@@ -36,6 +36,8 @@ library
                     , Anima.Desktop.Make
                     , Anima.Desktop.Fill
                     , Anima.Desktop.Geometry
+                    , Anima.Desktop.Icons
+                    , Anima.Desktop.Style
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d

@@ -33,13 +33,15 @@ import GI.GLib qualified as GLib
 import GI.Gdk qualified as Gdk
 import GI.GdkPixbuf qualified as Pixbuf
 import GI.Gtk qualified as Gtk
+import GI.Pango qualified as Pango
 
 import Anima.Desktop.Backend (Backend (..), Saved (..), localBackend, remoteBackend)
 import Anima.Desktop.Config (Connection (..), cacheFolder, defaultFolder, loadConnection, saveConnection)
 import Anima.Desktop.Draw (Pictures, drawCel, drawItem, drawItems)
 import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
-import Anima.Desktop.Scene (Env (..), celAt, drawLayers, duration, newCache, placement)
+import Anima.Desktop.Scene (Env (..), celAt, drawFrame, drawLayers, duration, newCache, placement)
+import Anima.Desktop.Style (accent, applyStyle, dimText, ground, hairline, iconImage, rgb, rgba, rounded, surface, textColour, uiText, workspace)
 
 import Anima.Desktop.Fill qualified as Fill
 import Anima.Desktop.Geometry qualified as Geometry
@@ -210,123 +212,180 @@ runApp = do
 -- | Builds and shows the window; nothing is connected yet.
 buildWindow :: IO Window
 buildWindow = do
-    -- Dark, as the canvas surround and the timeline are.
-    settings <- Gtk.settingsGetDefault
-    forM_ settings $ \x -> Gtk.setSettingsGtkApplicationPreferDarkTheme x True
+    applyStyle
     st <- newIORef initial
     win <- new Gtk.Window [#title := "anima2D", #defaultWidth := 1360, #defaultHeight := 880]
+    -- The title bar: back to the projects, undo and redo, whether it is saved; the
+    -- connection, a new project (on the list) and the sidebar.
     header <- new Gtk.HeaderBar [#showCloseButton := True, #title := "anima2D"]
     Gtk.windowSetTitlebar win (Just header)
-    backBtn <- Gtk.buttonNewWithLabel "Projects"
-    connBtn <- Gtk.buttonNewWithLabel "Connection…"
-    newBtn <- Gtk.buttonNewWithLabel "New project"
-    undoBtn <- Gtk.buttonNewWithLabel "Undo"
-    redoBtn <- Gtk.buttonNewWithLabel "Redo"
+    backBtn <- iconButton "back" "Projects"
+    undoBtn <- iconButton "undo" "Undo (⌘Z)"
+    redoBtn <- iconButton "redo" "Redo (⇧⌘Z)"
     saveState <- Gtk.labelNew (Just "")
+    addClass saveState "dim"
+    connBtn <- iconButton "server" "Where projects live…"
+    newBtn <- Gtk.buttonNewWithLabel "New project"
+    addClass newBtn "primary"
+    chatBtn <- Gtk.toggleButtonNew
+    iconInto chatBtn "chat" "Sidebar"
+    Gtk.toggleButtonSetActive chatBtn True
     Gtk.headerBarPackStart header backBtn
     Gtk.headerBarPackStart header undoBtn
     Gtk.headerBarPackStart header redoBtn
     Gtk.headerBarPackStart header saveState
+    Gtk.headerBarPackEnd header chatBtn
     Gtk.headerBarPackEnd header connBtn
     Gtk.headerBarPackEnd header newBtn
-    stack <- new Gtk.Stack [#transitionType := Gtk.StackTransitionTypeCrossfade]
-    -- Home: the projects, as a grid of buttons.
-    flow <- new Gtk.FlowBox [#selectionMode := Gtk.SelectionModeNone, #maxChildrenPerLine := 6, #columnSpacing := 12, #rowSpacing := 12, #margin := 24]
-    homeScroll <- new Gtk.ScrolledWindow []
-    Gtk.containerAdd homeScroll flow
+    stack <- new Gtk.Stack [#transitionType := Gtk.StackTransitionTypeCrossfade, #transitionDuration := 120]
+    -- Home: the projects, as cards with their first frame.
+    flow <- new Gtk.FlowBox [#selectionMode := Gtk.SelectionModeNone, #maxChildrenPerLine := 8, #columnSpacing := 16, #rowSpacing := 16, #homogeneous := True, #valign := Gtk.AlignStart]
+    homeTitle <- Gtk.labelNew (Just "Projects")
+    addClass homeTitle "home-title"
+    Gtk.labelSetXalign homeTitle 0
     status <- Gtk.labelNew (Just "")
-    home <- Gtk.boxNew Gtk.OrientationVertical 8
-    Gtk.boxPackStart home status False False 8
-    Gtk.boxPackStart home homeScroll True True 0
-    -- Tools: one at a time, each with its kind; then colour, size and opacity.
-    selectR <- Gtk.radioButtonNewWithLabel ([] :: [Gtk.RadioButton]) "Select"
-    brushR <- Gtk.radioButtonNewWithLabelFromWidget (Just selectR) "Brush"
-    scatterR <- Gtk.radioButtonNewWithLabelFromWidget (Just brushR) "Scatter"
-    eraserR <- Gtk.radioButtonNewWithLabelFromWidget (Just brushR) "Eraser"
-    shapeR <- Gtk.radioButtonNewWithLabelFromWidget (Just brushR) "Shapes"
-    fillR <- Gtk.radioButtonNewWithLabelFromWidget (Just brushR) "Fill"
-    textR <- Gtk.radioButtonNewWithLabelFromWidget (Just brushR) "Text"
-    forM_ [selectR, brushR, scatterR, eraserR, shapeR, fillR, textR] $ \r -> Gtk.toggleButtonSetMode r False
+    addClass status "dim"
+    Gtk.labelSetXalign status 0
+    Gtk.labelSetEllipsize status Pango.EllipsizeModeMiddle
+    homeBody <- Gtk.boxNew Gtk.OrientationVertical 6
+    forM_ [Gtk.widgetSetMarginStart, Gtk.widgetSetMarginEnd] $ \m -> m homeBody 32
+    Gtk.widgetSetMarginTop homeBody 28
+    Gtk.widgetSetMarginBottom homeBody 28
+    Gtk.boxPackStart homeBody homeTitle False False 0
+    Gtk.boxPackStart homeBody status False False 0
+    Gtk.widgetSetMarginTop flow 18
+    Gtk.boxPackStart homeBody flow False False 0
+    home <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+    Gtk.containerAdd home homeBody
+    -- Tools: a rail of icons; the bar above the canvas holds the chosen tool's options,
+    -- then colour, size and opacity.
+    selectR <- toolButton Nothing "select" "Select (V)"
+    brushR <- toolButton (Just selectR) "pen" "Brush (B)"
+    scatterR <- toolButton (Just selectR) "grass" "Scatter (G)"
+    eraserR <- toolButton (Just selectR) "eraser" "Eraser (E)"
+    shapeR <- toolButton (Just selectR) "shapes" "Shapes (U)"
+    fillR <- toolButton (Just selectR) "fill" "Fill (K)"
+    textR <- toolButton (Just selectR) "text" "Text (T)"
     Gtk.toggleButtonSetActive brushR True
-    brushC <- combo ["pen", "pencil", "marker", "paint"]
-    scatterC <- combo ["grass", "birds", "stars", "leaves", "flowers", "spray"]
-    eraserC <- combo ["pixel", "object"]
-    shapeC <- combo ["ellipse", "rect", "triangle", "line"]
+    rail <- Gtk.boxNew Gtk.OrientationVertical 2
+    addClass rail "rail"
+    pack rail [toW selectR, toW brushR, toW scatterR, toW eraserR, toW shapeR, toW fillR, toW textR]
+    toolName <- Gtk.labelNew (Just "Brush")
+    addClass toolName "dim"
+    Gtk.widgetSetSizeRequest toolName 64 (-1)
+    Gtk.labelSetXalign toolName 0
+    (brushKinds, pickBrush) <- segmented [(k, Right k, Text.toTitle k) | k <- ["pen", "pencil", "marker", "paint"]] (\v -> modifyIORef' st (\s -> s {brushKind = v}))
+    (scatterKinds, _) <- segmented [(k, Right k, Text.toTitle k) | k <- ["grass", "birds", "stars", "leaves", "flowers", "spray"]] (\v -> modifyIORef' st (\s -> s {scatterKind = v}))
+    (eraserKinds, _) <- segmented [("pixel", Left "Pixel", "Rub out what it passes over"), ("object", Left "Object", "Remove whole items")] (\v -> modifyIORef' st (\s -> s {objectEraser = v == "object"}))
+    (shapeKinds, _) <-
+        segmented
+            [(k, Right k, Text.toTitle k) | k <- ["ellipse", "rect", "triangle", "line"]]
+            ( \v ->
+                modifyIORef' st $ \s ->
+                    s
+                        { shapeKind = case v of
+                            "rect" -> RectShape
+                            "triangle" -> TriangleShape
+                            "line" -> LineShape
+                            _ -> EllipseShape
+                        }
+            )
+    pickBrush "pen"
     filledB <- Gtk.checkButtonNewWithLabel "Filled"
     colourB <- Gtk.colorButtonNew
+    Gtk.widgetSetTooltipText colourB (Just "Colour")
     setColour colourB "#1c1c1e"
     sizeS <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0.5 200 0.5
     Gtk.rangeSetValue sizeS 6
-    Gtk.widgetSetSizeRequest sizeS 140 (-1)
+    Gtk.widgetSetSizeRequest sizeS 130 (-1)
     alphaS <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0.05 1 0.05
     Gtk.rangeSetValue alphaS 1
-    Gtk.widgetSetSizeRequest alphaS 100 (-1)
+    Gtk.widgetSetSizeRequest alphaS 90 (-1)
+    forM_ [(sizeS, 0), (alphaS, 2)] $ \(sc, d) -> do
+        Gtk.scaleSetDrawValue sc True
+        Gtk.scaleSetValuePos sc Gtk.PositionTypeRight
+        Gtk.scaleSetDigits sc d
     sizeL <- Gtk.labelNew (Just "Size")
     alphaL <- Gtk.labelNew (Just "Opacity")
-    -- The tools stand in a rail beside the canvas; the bar above shows the chosen tool's
-    -- options, then colour, size and opacity.
-    rail <- Gtk.boxNew Gtk.OrientationVertical 4
-    Gtk.widgetSetMarginStart rail 6
-    Gtk.widgetSetMarginTop rail 6
-    pack rail [toW selectR, toW brushR, toW scatterR, toW eraserR, toW shapeR, toW fillR, toW textR]
-    tools <- Gtk.boxNew Gtk.OrientationHorizontal 6
-    Gtk.widgetSetMarginStart tools 8
-    Gtk.widgetSetMarginEnd tools 8
-    Gtk.widgetSetMarginTop tools 4
-    pack tools [toW brushC, toW scatterC, toW eraserC, toW shapeC, toW filledB]
-    toolsEnd <- sequence [toW colourB, toW sizeL, toW sizeS, toW alphaL, toW alphaS]
+    forM_ [sizeL, alphaL] (`addClass` "dim")
+    tools <- Gtk.boxNew Gtk.OrientationHorizontal 8
+    addClass tools "bar"
+    pack tools [toW toolName, toW brushKinds, toW scatterKinds, toW eraserKinds, toW shapeKinds, toW filledB]
+    toolsEnd <- sequence [toW colourB, separator, toW sizeL, toW sizeS, toW alphaL, toW alphaS]
     forM_ (reverse toolsEnd) $ \w -> Gtk.boxPackEnd tools w False False 0
-    options <- sequence [toW brushC, toW scatterC, toW eraserC, toW shapeC, toW filledB]
+    options <- sequence [toW brushKinds, toW scatterKinds, toW eraserKinds, toW shapeKinds, toW filledB]
     let
-        showOptions t = zipWithM_ Gtk.widgetSetVisible options $ case t of
-            BrushTool -> [True, False, False, False, False]
-            ScatterTool -> [False, True, False, False, False]
-            EraserTool -> [False, False, True, False, False]
-            ShapeTool -> [False, False, False, True, True]
-            _ -> [False, False, False, False, False]
-    -- Editor: tools over canvas over transport over timeline; the chat on the right.
+        showOptions t = do
+            Gtk.labelSetText toolName $ case t of
+                SelectTool -> "Select"
+                BrushTool -> "Brush"
+                ScatterTool -> "Scatter"
+                EraserTool -> "Eraser"
+                ShapeTool -> "Shapes"
+                FillTool -> "Fill"
+                TextTool -> "Text"
+            zipWithM_ Gtk.widgetSetVisible options $ case t of
+                BrushTool -> [True, False, False, False, False]
+                ScatterTool -> [False, True, False, False, False]
+                EraserTool -> [False, False, True, False, False]
+                ShapeTool -> [False, False, False, True, True]
+                _ -> [False, False, False, False, False]
+    -- Editor: the bar over the rail and canvas, over the transport and the timeline; the
+    -- sidebar on the right.
     canvas <- new Gtk.DrawingArea [#canFocus := True]
     timeline <- new Gtk.DrawingArea []
-    Gtk.widgetSetSizeRequest timeline (-1) 190
+    Gtk.widgetSetSizeRequest timeline (-1) 168
     forM_ [canvas, timeline] $ \a -> Gtk.widgetAddEvents a [Gdk.EventMaskButtonPressMask, Gdk.EventMaskButtonReleaseMask, Gdk.EventMaskPointerMotionMask, Gdk.EventMaskScrollMask, Gdk.EventMaskSmoothScrollMask]
-    prevBtn <- Gtk.buttonNewWithLabel "◀"
-    playBtn <- Gtk.buttonNewWithLabel "Play"
-    nextBtn <- Gtk.buttonNewWithLabel "▶"
-    onionBtn <- Gtk.toggleButtonNewWithLabel "Onion skin"
-    Gtk.toggleButtonSetActive onionBtn True
-    fitBtn <- Gtk.buttonNewWithLabel "Fit"
+    prevBtn <- iconButton "prev" "Previous frame (←)"
+    playBtn <- iconButton "play" "Play (Space)"
+    nextBtn <- iconButton "next" "Next frame (→)"
     counter <- Gtk.labelNew (Just "")
-    newCelB <- Gtk.buttonNewWithLabel "+ Drawing"
-    dupCelB <- Gtk.buttonNewWithLabel "Duplicate"
-    delCelB <- Gtk.buttonNewWithLabel "Delete drawing"
-    lessB <- Gtk.buttonNewWithLabel "Hold −"
-    moreB <- Gtk.buttonNewWithLabel "Hold +"
-    addLayerB <- Gtk.buttonNewWithLabel "+ Layer"
-    hideB <- Gtk.buttonNewWithLabel "Hide layer"
-    lockB <- Gtk.buttonNewWithLabel "Lock layer"
-    delLayerB <- Gtk.buttonNewWithLabel "Delete layer"
-    transport <- Gtk.boxNew Gtk.OrientationHorizontal 6
-    Gtk.widgetSetMarginStart transport 8
-    Gtk.widgetSetMarginEnd transport 8
-    pack transport [toW prevBtn, toW playBtn, toW nextBtn, toW counter, toW newCelB, toW dupCelB, toW delCelB, toW lessB, toW moreB, toW addLayerB, toW hideB, toW lockB, toW delLayerB]
+    addClass counter "counter"
+    newCelB <- iconButton "newDrawing" "New drawing (N)"
+    dupCelB <- iconButton "duplicate" "Duplicate drawing (D)"
+    delCelB <- iconButton "remove" "Delete drawing"
+    lessB <- iconButton "minus" "Hold one frame less"
+    holdL <- Gtk.labelNew (Just "Hold")
+    addClass holdL "dim"
+    moreB <- iconButton "add" "Hold one frame more"
+    addLayerB <- iconButton "newLayer" "New layer"
+    hideB <- iconButton "eye" "Hide layer"
+    lockB <- iconButton "unlock" "Lock layer"
+    delLayerB <- iconButton "remove" "Delete layer"
+    onionBtn <- Gtk.toggleButtonNew
+    iconInto onionBtn "onion" "Onion skin (O)"
+    Gtk.toggleButtonSetActive onionBtn True
+    fitBtn <- iconButton "fit" "Fit to window (0)"
+    transport <- Gtk.boxNew Gtk.OrientationHorizontal 2
+    addClass transport "transport"
+    pack transport [toW prevBtn, toW playBtn, toW nextBtn, toW counter, separator, toW newCelB, toW dupCelB, toW delCelB, separator, toW lessB, toW holdL, toW moreB, separator, toW addLayerB, toW hideB, toW lockB, toW delLayerB]
     Gtk.boxPackEnd transport fitBtn False False 0
     Gtk.boxPackEnd transport onionBtn False False 0
-    left <- Gtk.boxNew Gtk.OrientationVertical 4
+    left <- Gtk.boxNew Gtk.OrientationVertical 0
     work <- Gtk.boxNew Gtk.OrientationHorizontal 0
     Gtk.boxPackStart work rail False False 0
     Gtk.boxPackStart work canvas True True 0
     Gtk.boxPackStart left tools False False 0
     Gtk.boxPackStart left work True True 0
-    Gtk.boxPackStart left transport False False 4
+    Gtk.boxPackStart left transport False False 0
     Gtk.boxPackStart left timeline False False 0
     chat <- chatPlaceholder
     paned <- Gtk.panedNew Gtk.OrientationHorizontal
     Gtk.panedPack1 paned left True False
     Gtk.panedPack2 paned chat False False
     Gtk.panedSetPosition paned 1040
+    _ <- on chatBtn #toggled (Gtk.toggleButtonGetActive chatBtn >>= Gtk.widgetSetVisible chat)
     Gtk.stackAddNamed stack home "home"
     Gtk.stackAddNamed stack paned "editor"
     Gtk.containerAdd win stack
+    layerIcons <- newIORef Nothing
+    let
+        -- What the title bar offers on the list, and in the editor.
+        chrome editing = do
+            forM_ [backBtn, undoBtn, redoBtn] $ \x -> Gtk.widgetSetVisible x editing
+            Gtk.widgetSetVisible saveState editing
+            Gtk.widgetSetVisible chatBtn editing
+            Gtk.widgetSetVisible newBtn (not editing)
     let
         redraw = Gtk.widgetQueueDraw canvas >> Gtk.widgetQueueDraw timeline >> showCounter
         showCounter = do
@@ -336,17 +395,25 @@ buildWindow = do
                 Just o -> Gtk.labelSetText counter (Text.pack (show (s.playhead + 1) <> " / " <> show (duration o.view)))
             Gtk.widgetSetSensitive undoBtn (not (null s.past))
             Gtk.widgetSetSensitive redoBtn (not (null s.future))
+            -- The layer buttons say what pressing them does to the edited layer.
+            forM_ (s.open >>= \o -> lookup s.layer (zip [0 ..] o.view.stack)) $ \l -> do
+                was <- readIORef layerIcons
+                unless (was == Just (l.visible, l.locked)) $ do
+                    writeIORef layerIcons (Just (l.visible, l.locked))
+                    iconInto hideB (if l.visible then "eye" else "eyeOff") (if l.visible then "Hide layer" else "Show layer")
+                    iconInto lockB (if l.locked then "lock" else "unlock") (if l.locked then "Unlock layer" else "Lock layer")
         say t = Gtk.labelSetText status t >> Gtk.labelSetText saveState t
         stop = do
             s <- readIORef st
             forM_ s.playing GLib.sourceDestroy
             writeIORef st s {playing = Nothing}
-            Gtk.buttonSetLabel playBtn "Play"
+            iconInto playBtn "play" "Play (Space)"
         goHome = do
             stop
             saveNow
             modifyIORef' st (\s -> s {open = Nothing, past = [], future = []})
             Gtk.stackSetVisibleChildName stack "home"
+            chrome False
             Gtk.headerBarSetSubtitle header Nothing
             refreshList
         refreshList = do
@@ -359,11 +426,7 @@ buildWindow = do
                         kids <- Gtk.containerGetChildren flow
                         mapM_ Gtk.widgetDestroy kids
                         Gtk.labelSetText status (if null ps then "No projects yet: start one with New project." else b.describe)
-                        forM_ ps $ \p -> do
-                            btn <- Gtk.buttonNewWithLabel (unparse (summaryName p))
-                            Gtk.widgetSetSizeRequest btn 200 120
-                            _ <- on btn #clicked (openProject (summaryId p))
-                            Gtk.containerAdd flow btn
+                        forM_ ps $ \p -> projectCard b p openProject >>= Gtk.containerAdd flow
                         Gtk.widgetShowAll flow
         openProject pid = do
             s <- readIORef st
@@ -376,6 +439,7 @@ buildWindow = do
                         modifyIORef' st (\x -> x {open = Just o, playhead = 0, layer = topDrawing o.view, fitted = False, past = [], future = [], dirty = False})
                         Gtk.headerBarSetSubtitle header (Just o.view.title)
                         Gtk.stackSetVisibleChildName stack "editor"
+                        chrome True
                         Gtk.labelSetText saveState "Saved"
                         redraw
         connect c = do
@@ -512,7 +576,7 @@ buildWindow = do
                     GLib.sourceSetCallback src (step 1 >> pure True)
                     _ <- GLib.sourceAttach src Nothing
                     writeIORef st s {playing = Just src}
-                    Gtk.buttonSetLabel playBtn "Pause"
+                    iconInto playBtn "pause" "Pause (Space)"
                 (Nothing, Nothing) -> pure ()
         celEdit f = do
             t <- target
@@ -590,19 +654,6 @@ buildWindow = do
     _ <- on eraserR #toggled (pick EraserTool)
     _ <- on shapeR #toggled (pick ShapeTool)
     _ <- on textR #toggled (pick TextTool)
-    _ <- on brushC #changed $ Gtk.comboBoxTextGetActiveText brushC >>= mapM_ (\v -> modifyIORef' st (\s -> s {brushKind = v})) >> Gtk.toggleButtonSetActive brushR True
-    _ <- on scatterC #changed $ Gtk.comboBoxTextGetActiveText scatterC >>= mapM_ (\v -> modifyIORef' st (\s -> s {scatterKind = v})) >> Gtk.toggleButtonSetActive scatterR True
-    _ <- on eraserC #changed $ Gtk.comboBoxTextGetActiveText eraserC >>= mapM_ (\v -> modifyIORef' st (\s -> s {objectEraser = v == "object"})) >> Gtk.toggleButtonSetActive eraserR True
-    _ <- on shapeC #changed $ do
-        v <- Gtk.comboBoxTextGetActiveText shapeC
-        let
-            k = case v of
-                Just "rect" -> RectShape
-                Just "triangle" -> TriangleShape
-                Just "line" -> LineShape
-                _ -> EllipseShape
-        modifyIORef' st (\s -> s {shapeKind = k})
-        Gtk.toggleButtonSetActive shapeR True
     _ <- on filledB #toggled (Gtk.toggleButtonGetActive filledB >>= \f -> modifyIORef' st (\s -> s {filled = f}))
     _ <- on colourB #colorSet (getColour colourB >>= \c -> modifyIORef' st (\s -> s {colour = c}))
     _ <- on sizeS #valueChanged (Gtk.rangeGetValue sizeS >>= \v -> modifyIORef' st (\s -> s {penSize = v}))
@@ -622,6 +673,15 @@ buildWindow = do
             _ -> pure s0
         Connector.renderWithContext (drawCanvas s (finish s)) ctx
         pure True
+    -- A canvas that changes size fits the paper again.
+    lastSize <- newIORef (0, 0)
+    _ <- on canvas #sizeAllocate $ \_ -> do
+        cw <- Gtk.widgetGetAllocatedWidth canvas
+        ch <- Gtk.widgetGetAllocatedHeight canvas
+        was <- readIORef lastSize
+        unless (was == (cw, ch)) $ do
+            writeIORef lastSize (cw, ch)
+            modifyIORef' st (\s -> s {fitted = False})
     -- Pen, mouse and touch in one place: the pen and the mouse draw (with pressure where there
     -- is any); touch, the middle button and Space-drag pan.
     let
@@ -861,6 +921,7 @@ buildWindow = do
     _ <- on win #focusOutEvent $ \_ -> modifyIORef' st (\s -> s {spaceHeld = False, shiftHeld = False}) >> pure False
     Gtk.widgetShowAll win
     showOptions BrushTool
+    chrome False
     let
         probe = do
             s <- readIORef st
@@ -986,10 +1047,10 @@ copyOf p = do
 -- Drawing ---------------------------------------------------------------------------------
 
 headerW, rulerH, rowH, unitW :: Double
-headerW = 150
-rulerH = 22
-rowH = 34
-unitW = 14
+headerW = 160
+rulerH = 24
+rowH = 32
+unitW = 16
 
 -- | Widget pixels → canvas pixels.
 canvasPoint :: State -> (Double, Double) -> (Double, Double)
@@ -997,13 +1058,18 @@ canvasPoint s (x, y) = ((x - s.panX) / s.magnify, (y - s.panY) / s.magnify)
 
 drawCanvas :: State -> (Draft -> Maybe (Either Text Item)) -> C.Render ()
 drawCanvas s finishing = do
-    C.setSourceRGB 0.16 0.16 0.18
+    rgb workspace
     C.paint
     forM_ s.open $ \o -> do
         let
             v = o.view
             pw = fromIntegral v.width
             ph = fromIntegral v.height
+        -- A soft shadow under the paper, in screen pixels.
+        forM_ [(12, 0.05), (6, 0.08), (2, 0.14)] $ \(spread, a) -> do
+            C.setSourceRGBA 0 0 0 a
+            rounded (s.panX - spread) (s.panY - spread + spread / 2) (pw * s.magnify + 2 * spread) (ph * s.magnify + 2 * spread) (spread + 2)
+            C.fill
         C.translate s.panX s.panY
         C.scale s.magnify s.magnify
         C.setSourceRGB 1 1 1
@@ -1083,7 +1149,7 @@ drawCanvas s finishing = do
 
 drawTimeline :: State -> Double -> Double -> C.Render ()
 drawTimeline s w h = do
-    C.setSourceRGB 0.12 0.12 0.13
+    rgb ground
     C.paint
     forM_ s.open $ \o -> do
         let
@@ -1092,22 +1158,33 @@ drawTimeline s w h = do
             x0 = headerW - s.tlScroll
             frameX f = x0 + fromIntegral f * unitW
             layers = reverse (zip [0 :: Int ..] v.stack)
-        -- Ruler: a tick a frame, a longer one a second.
-        C.setSourceRGB 0.55 0.55 0.6
-        forM_ [0 .. total + 24] $ \f -> do
+            visibleX x = x >= headerW - unitW && x <= w
+        -- Ruler: a tick a frame, the frame number every fifth.
+        rgb surface
+        C.rectangle 0 0 w rulerH
+        C.fill
+        forM_ [0 .. total + 48] $ \f -> do
             let
                 x = frameX f
-                second = f `mod` max 1 v.rate == 0
-            when (x >= headerW && x <= w) $ do
-                C.rectangle x (if second then 8 else 15) 1 (if second then 14 else 7)
+                labelled = (f + 1) `mod` 5 == 0 || f == 0
+            when (visibleX x && x >= headerW) $ do
+                rgba (dimText, if labelled then 0.7 else 0.3)
+                C.rectangle (x + unitW / 2) (rulerH - (if labelled then 7 else 4)) 1 (if labelled then 7 else 4)
                 C.fill
-        -- Rows: drawings as blocks as wide as they are held.
+                when labelled $ do
+                    rgb dimText
+                    C.moveTo (x + unitW / 2 + 3) 3
+                    void (uiText 10 False (Text.pack (show (f + 1))))
+        rgba hairline
+        C.rectangle 0 (rulerH - 1) w 1
+        C.fill
+        -- Rows: each drawing a block as wide as it is held.
         forM_ (zip [0 :: Int ..] layers) $ \(row, (li, l)) -> do
             let
                 y = rulerH + fromIntegral row * rowH
             when (li == s.layer) $ do
-                C.setSourceRGBA 0.36 0.55 1 0.12
-                C.rectangle 0 y w rowH
+                rgba (accent, 0.07)
+                C.rectangle headerW y (w - headerW) rowH
                 C.fill
             case l.kind of
                 DrawingView holdLast cels -> do
@@ -1116,35 +1193,55 @@ drawTimeline s w h = do
                         starts = scanl (+) 0 (map (.hold) cels)
                     forM_ (zip3 [0 :: Int ..] cels starts) $ \(ci, cel, start) -> do
                         let
-                            x = frameX start
+                            x = frameX start + 1
                             cw = fromIntegral cel.hold * unitW - 2
                         unless (x + cw < headerW || x > w) $ do
+                            rounded x (y + 7) cw (rowH - 14) 3
                             if li == s.layer && here == Just ci
-                                then C.setSourceRGB 0.36 0.55 1
-                                else if null cel.items then C.setSourceRGB 0.25 0.25 0.28 else C.setSourceRGB 0.85 0.86 0.9
-                            C.rectangle (max headerW x) (y + 5) (min cw (x + cw - headerW)) (rowH - 10)
-                            C.fill
+                                then rgb accent >> C.fill
+                                else
+                                    if null cel.items
+                                        then rgba ((1, 1, 1), 0.14) >> C.setLineWidth 1 >> C.stroke
+                                        else rgba ((1, 1, 1), 0.3) >> C.fill
                 LightLayerView _ -> band y (1, 0.85, 0.5)
                 ReferenceView _ _ -> band y (0.6, 0.6, 0.65)
-            -- Layer name column, over the lane when it scrolls.
-            C.setSourceRGB 0.15 0.15 0.17
-            C.rectangle 0 y headerW rowH
+            rgba hairline
+            C.rectangle 0 (y + rowH - 1) w 1
             C.fill
-            C.setSourceRGB (if l.visible then 0.92 else 0.5) (if l.visible then 0.92 else 0.5) (if l.visible then 0.95 else 0.55)
-            C.moveTo 10 (y + rowH / 2 + 4)
-            C.setFontSize 12
-            C.showText (Text.unpack (Text.take 16 l.name <> (if l.locked then " 🔒" else "")))
-        -- Playhead.
+            -- The layer's name, in a column the lanes scroll under.
+            rgb (if li == s.layer then (0x23 / 255, 0x23 / 255, 0x27 / 255) else surface)
+            C.rectangle 0 y headerW (rowH - 1)
+            C.fill
+            when (li == s.layer) $ do
+                rgb accent
+                C.rectangle 0 y 2 (rowH - 1)
+                C.fill
+            rgba (textColour, if l.visible then 1 else 0.4)
+            C.moveTo 12 (y + rowH / 2 - 8)
+            void (uiText 12 (li == s.layer) (Text.take 18 l.name))
+            when l.locked $ do
+                rgb dimText
+                C.moveTo (headerW - 48) (y + rowH / 2 - 7)
+                void (uiText 10 False "locked")
+        rgba hairline
+        C.rectangle (headerW - 1) 0 1 h
+        C.fill
+        -- The playhead: a line down the lanes and its frame number on the ruler.
         let
             px = frameX s.playhead + unitW / 2
         when (px >= headerW) $ do
-            C.setSourceRGB 1 0.35 0.35
-            C.rectangle px 0 1.5 h
+            rgb accent
+            C.rectangle (px - 0.75) rulerH 1.5 (h - rulerH)
             C.fill
+            rounded (px - 13) 2 26 (rulerH - 5) 4
+            C.fill
+            C.setSourceRGB 1 1 1
+            C.moveTo (px - (if s.playhead + 1 >= 10 then 7 else 3.5)) 3.5
+            void (uiText 10 True (Text.pack (show (s.playhead + 1))))
     where
         band y (r, g, b) = do
-            C.setSourceRGBA r g b 0.25
-            C.rectangle headerW (y + 5) (w - headerW) (rowH - 10)
+            C.setSourceRGBA r g b 0.2
+            rounded headerW (y + 7) (w - headerW) (rowH - 14) 3
             C.fill
 
 -- Widgets ---------------------------------------------------------------------------------
@@ -1155,39 +1252,157 @@ toW = Gtk.toWidget
 pack :: Gtk.Box -> [IO Gtk.Widget] -> IO ()
 pack box ws = sequence ws >>= mapM_ (\w -> Gtk.boxPackStart box w False False 0)
 
-combo :: [Text] -> IO Gtk.ComboBoxText
-combo opts = do
-    c <- Gtk.comboBoxTextNew
-    mapM_ (Gtk.comboBoxTextAppendText c) opts
-    Gtk.comboBoxSetActive c 0
-    pure c
+addClass :: (Gtk.IsWidget w) => w -> Text -> IO ()
+addClass w c = Gtk.widgetGetStyleContext w >>= \sc -> Gtk.styleContextAddClass sc c
+
+separator :: IO Gtk.Widget
+separator = do
+    sep <- Gtk.boxNew Gtk.OrientationHorizontal 0
+    addClass sep "sep"
+    Gtk.widgetSetValign sep Gtk.AlignCenter
+    toW sep
+
+-- | Puts icon `name` on a button, with `tip` as its tooltip.
+iconInto :: (Gtk.IsButton b, Gtk.IsWidget b) => b -> Text -> Text -> IO ()
+iconInto b name tip = do
+    img <- iconImage name 16
+    Gtk.buttonSetImage b (Just img)
+    Gtk.buttonSetAlwaysShowImage b True
+    Gtk.widgetSetTooltipText b (Just tip)
+    addClass b "icon"
+
+iconButton :: Text -> Text -> IO Gtk.Button
+iconButton name tip = do
+    b <- Gtk.buttonNew
+    iconInto b name tip
+    pure b
+
+-- | A tool in the rail: one of a group, shown as its icon.
+toolButton :: Maybe Gtk.RadioButton -> Text -> Text -> IO Gtk.RadioButton
+toolButton group name tip = do
+    r <- Gtk.radioButtonNewFromWidget group
+    Gtk.toggleButtonSetMode r False
+    img <- iconImage name 18
+    Gtk.buttonSetImage r (Just img)
+    Gtk.buttonSetAlwaysShowImage r True
+    Gtk.widgetSetTooltipText r (Just tip)
+    pure r
+
+{- | A row of choices, one at a time, each an icon (Right) or a word (Left); `chose` hears the
+value picked. Also returns a way to pick one from code.
+-}
+segmented :: [(Text, Either Text Text, Text)] -> (Text -> IO ()) -> IO (Gtk.Box, Text -> IO ())
+segmented choices chose = do
+    box <- Gtk.boxNew Gtk.OrientationHorizontal 0
+    addClass box "segmented"
+    Gtk.widgetSetValign box Gtk.AlignCenter
+    buttons <- go Nothing choices
+    forM_ buttons $ \(_, r) -> Gtk.boxPackStart box r False False 0
+    pure (box, \v -> forM_ (lookup v buttons) (`Gtk.toggleButtonSetActive` True))
+    where
+        go _ [] = pure []
+        go group ((value, face, tip) : rest) = do
+            r <- Gtk.radioButtonNewFromWidget group
+            Gtk.toggleButtonSetMode r False
+            case face of
+                Right name -> iconImage name 16 >>= \img -> Gtk.buttonSetImage r (Just img) >> Gtk.buttonSetAlwaysShowImage r True
+                Left word -> Gtk.buttonSetLabel r word
+            Gtk.widgetSetTooltipText r (Just tip)
+            _ <- on r #toggled (Gtk.toggleButtonGetActive r >>= \on' -> when on' (chose value))
+            more <- go (Just (fromMaybe r group)) rest
+            pure ((value, r) : more)
+
+-- | A project on the list: its first frame, its name, and its size and length.
+projectCard :: Backend -> ProjectSummary -> (ProjectId -> IO ()) -> IO Gtk.Button
+projectCard b p openIt = do
+    btn <- Gtk.buttonNew
+    addClass btn "card"
+    box <- Gtk.boxNew Gtk.OrientationVertical 0
+    thumb <- new Gtk.DrawingArea []
+    Gtk.widgetSetSizeRequest thumb 232 130
+    envRef <- newIORef Nothing
+    _ <- on thumb #draw $ \ctx -> do
+        e <- readIORef envRef
+        tw <- Gtk.widgetGetAllocatedWidth thumb
+        th <- Gtk.widgetGetAllocatedHeight thumb
+        Connector.renderWithContext (thumbnail e (fromIntegral tw) (fromIntegral th)) ctx
+        pure True
+    name <- Gtk.labelNew (Just (unparse (summaryName p)))
+    addClass name "name"
+    meta <- Gtk.labelNew (Just " ")
+    addClass meta "meta"
+    forM_ [name, meta] $ \l -> do
+        Gtk.labelSetXalign l 0
+        Gtk.labelSetEllipsize l Pango.EllipsizeModeEnd
+        Gtk.widgetSetMarginStart l 12
+        Gtk.widgetSetMarginEnd l 12
+    Gtk.widgetSetMarginTop name 10
+    Gtk.widgetSetMarginBottom meta 12
+    Gtk.boxPackStart box thumb False False 0
+    Gtk.boxPackStart box name False False 0
+    Gtk.boxPackStart box meta False False 2
+    Gtk.containerAdd btn box
+    _ <- on btn #clicked (openIt (summaryId p))
+    background (b.load (summaryId p)) $ \case
+        Right (pr, _) -> do
+            let
+                v = viewProject pr
+            pics <- loadPictures b v
+            cache <- newCache
+            writeIORef envRef (Just Env {pictures = pics, cache, project = v})
+            Gtk.labelSetText meta (Text.pack (show v.width <> " × " <> show v.height <> " · " <> show v.rate <> " fps · " <> show (duration v) <> (if duration v == 1 then " frame" else " frames")))
+            Gtk.widgetQueueDraw thumb
+        Left _ -> pure ()
+    pure btn
+
+-- | A project's first frame, fitted into w × h with rounded top corners.
+thumbnail :: Maybe Env -> Double -> Double -> C.Render ()
+thumbnail e w h = do
+    rounded 1 1 (w - 2) (h + 20) 8
+    C.clip
+    rgb workspace
+    C.paint
+    forM_ e $ \env -> do
+        let
+            v = env.project
+            k = min (w / fromIntegral v.width) (h / fromIntegral v.height)
+            dw = fromIntegral v.width * k
+            dh = fromIntegral v.height * k
+        C.translate ((w - dw) / 2) ((h - dh) / 2)
+        drawFrame env 0 (max 1 (round dw)) (max 1 (round dh)) True True
 
 setColour :: Gtk.ColorButton -> Text -> IO ()
 setColour b hex = do
-    rgba <- new Gdk.RGBA []
-    ok <- Gdk.rGBAParse rgba hex
-    when ok (Gtk.colorChooserSetRgba b rgba)
+    c <- new Gdk.RGBA []
+    ok <- Gdk.rGBAParse c hex
+    when ok (Gtk.colorChooserSetRgba b c)
 
 -- | The chosen colour as #rrggbb.
 getColour :: Gtk.ColorButton -> IO Text
 getColour b = do
-    rgba <- Gtk.colorChooserGetRgba b
-    r <- Gdk.getRGBARed rgba
-    g <- Gdk.getRGBAGreen rgba
-    bl <- Gdk.getRGBABlue rgba
+    c <- Gtk.colorChooserGetRgba b
+    r <- Gdk.getRGBARed c
+    g <- Gdk.getRGBAGreen c
+    bl <- Gdk.getRGBABlue c
     let
         byte v = let n = max 0 (min 255 (round (v * 255) :: Int)) in (if n < 16 then "0" else "") <> showHex n ""
     pure (Text.pack ("#" <> byte r <> byte g <> byte bl))
 
 chatPlaceholder :: IO Gtk.Box
 chatPlaceholder = do
-    box <- Gtk.boxNew Gtk.OrientationVertical 8
+    box <- Gtk.boxNew Gtk.OrientationVertical 4
+    addClass box "sidebar"
     Gtk.widgetSetSizeRequest box 300 (-1)
-    title <- Gtk.labelNew (Just "Chat")
+    title <- Gtk.labelNew (Just "Assistant")
+    addClass title "heading"
     note <- Gtk.labelNew (Just "Chat with a model about this project comes next: it will draw, light and animate through the same tools agents use.")
+    addClass note "dim"
+    forM_ [title, note] $ \l -> Gtk.labelSetXalign l 0
     Gtk.labelSetLineWrap note True
-    Gtk.labelSetMaxWidthChars note 36
-    Gtk.boxPackStart box title False False 12
+    Gtk.labelSetMaxWidthChars note 34
+    Gtk.widgetSetMarginStart note 14
+    Gtk.widgetSetMarginEnd note 14
+    Gtk.boxPackStart box title False False 0
     Gtk.boxPackStart box note False False 0
     pure box
 
