@@ -89,8 +89,26 @@ export const openMenu = (clientX: number, clientY: number, items: readonly MenuI
     },
     opts,
   );
-  window.addEventListener("resize", closeMenu, opts);
-  window.addEventListener("blur", closeMenu, opts);
+  // A real resize closes it; a scrollbar coming and going, or iPad Safari's toolbars
+  // sliding as you tap, also fire resize and must not take the menu away under the finger.
+  const w0 = window.innerWidth;
+  const h0 = window.innerHeight;
+  window.addEventListener(
+    "resize",
+    () => {
+      if (Math.abs(window.innerWidth - w0) > 120 || Math.abs(window.innerHeight - h0) > 160) closeMenu();
+    },
+    opts,
+  );
+  // The window itself losing focus (another app); with capture on, every element's blur
+  // reaches here too, and the button that opened the menu blurs as a menu item is pressed.
+  window.addEventListener(
+    "blur",
+    (e) => {
+      if (e.target === window) closeMenu();
+    },
+    opts,
+  );
   open = { el: menu, done };
 };
 
