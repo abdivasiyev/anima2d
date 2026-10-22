@@ -82,17 +82,22 @@ export class CelCache {
       this.map.set(cel, hit);
       return hit;
     }
-    const c = new OffscreenCanvas(this.width, this.height);
+    // Full, the least recently used canvas is drawn over rather than a new one made: the
+    // memory stays fixed however long playback runs (Safari frees canvases late).
+    const oldest = this.map.size >= this.limit ? this.map.keys().next() : undefined;
+    let c: OffscreenCanvas | undefined;
+    if (oldest !== undefined && oldest.done !== true) {
+      c = this.map.get(oldest.value);
+      this.map.delete(oldest.value);
+    }
+    c ??= new OffscreenCanvas(this.width, this.height);
     const ctx = c.getContext("2d");
     if (ctx !== null) {
+      ctx.clearRect(0, 0, this.width, this.height);
       this.layers.render(cel.items);
       this.layers.composite(ctx);
     }
     this.map.set(cel, c);
-    for (const old of this.map.keys()) {
-      if (this.map.size <= this.limit) break;
-      this.map.delete(old);
-    }
     return c;
   }
 }

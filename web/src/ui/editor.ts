@@ -457,7 +457,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const where = (): Where => ({ layer: layerIdx, cel: celIdx });
   const pinKey = (layer: number, cel: number): string => `${project().layers[layer]?.id ?? ""}:${cel}`;
 
-  const cache = new CelCache(W, H, 64);
+  // Whole-canvas frames are big (8 MB each at 1080p) and iPad Safari stops drawing
+  // altogether past about 384 MB of canvases: keep about 100 MB of them.
+  const cache = new CelCache(W, H, Math.max(6, Math.floor(100e6 / (W * H * 4))));
   const layers = new LayeredFrame(W, H);
   const onionLayers = new LayeredFrame(W, H);
   const onionScratch = new OffscreenCanvas(W, H);
@@ -671,12 +673,16 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     }
   };
 
+  const renderCounter = (): void => {
+    const p = project();
+    const secs = (f: number): string => `${Math.floor(f / p.fps)}:${String(f % p.fps).padStart(2, "0")}`;
+    counter.replaceChildren(h("b", {}, String(t + 1)), ` / ${duration(p)}`, h("span", { class: "timecode" }, ` ${secs(t)}`));
+  };
+
   const renderChrome = (): void => {
     const p = project();
-    const total = duration(p);
     const cel = currentCel();
-    const secs = (f: number): string => `${Math.floor(f / p.fps)}:${String(f % p.fps).padStart(2, "0")}`;
-    counter.replaceChildren(h("b", {}, String(t + 1)), ` / ${total}`, h("span", { class: "timecode" }, ` ${secs(t)}`));
+    renderCounter();
     holdLabel.textContent = cel === undefined ? "—" : `${cel.hold} ${cel.hold === 1 ? "frame" : "frames"}`;
     fpsSelect.value = String(p.fps);
     speedSelect.value = String(settings.speed);
@@ -1763,6 +1769,9 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     playBtn.setAttribute("aria-label", "Pause");
     if (t < span.from || t > span.to) t = span.from;
     renderOnion();
+    aboveCtx.clearRect(0, 0, W, H);
+    inkCtx.clearRect(0, 0, W, H);
+    guideCtx.clearRect(0, 0, W, H);
     const throughCamera = settings.cameraView && p.camera.length > 0;
     outputCanvas.hidden = !throughCamera;
     const length = span.to - span.from + 1;
@@ -1793,13 +1802,12 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
         t = f;
         if (throughCamera) drawOutput(outputCtx, p, t, cache, W, H);
         else {
-          const l = drawing();
-          if (l !== undefined) celIdx = celAt(l, t) ?? l.cels.length - 1;
-          renderScene();
-          renderInk();
+          // Every layer from the cache onto one canvas: nothing is redrawn from its items.
+          belowCtx.clearRect(0, 0, W, H);
+          drawLayers(belowCtx, p, t, cache, { reference });
         }
-        renderChrome();
-        renderTimeline();
+        renderCounter();
+        tl.seek(t);
       }
       raf = requestAnimationFrame(tick);
     };

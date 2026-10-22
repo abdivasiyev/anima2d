@@ -48,6 +48,7 @@ export class Timeline {
   readonly el: HTMLElement;
   private unit = 28;
   private model: TimelineModel | undefined;
+  private playheads: HTMLElement[] = [];
   private readonly ruler: HTMLCanvasElement;
   private readonly rows: HTMLElement;
   private readonly body: HTMLElement;
@@ -106,6 +107,7 @@ export class Timeline {
     this.drawRuler(m, width);
 
     const rows: HTMLElement[] = [];
+    this.playheads = [];
     // Top layer first, as they stack on the canvas.
     for (let i = p.layers.length - 1; i >= 0; i--) {
       const layer = p.layers[i];
@@ -241,14 +243,31 @@ export class Timeline {
     }
 
     this.rows.replaceChildren(...rows);
-    // Keep the playhead in view.
-    const x = m.t * this.unit;
+    this.follow(m.t);
+  }
+
+  /**
+   * Only move the playhead, for playback: rebuilding every row, thumbnail and waveform
+   * each frame is far too slow for 24 frames a second.
+   */
+  seek(t: number): void {
+    if (this.model === undefined) return;
+    this.model = { ...this.model, t };
+    for (const ph of this.playheads) ph.style.left = `${t * this.unit + this.unit / 2}px`;
+    this.drawRuler(this.model, (duration(this.model.project) + 24) * this.unit);
+    this.follow(t);
+  }
+
+  /** Keep the playhead in view. */
+  private follow(t: number): void {
+    const x = t * this.unit;
     const view = this.body.clientWidth - HEADER;
     if (x < this.body.scrollLeft || x > this.body.scrollLeft + view - this.unit) this.body.scrollLeft = Math.max(0, x - view / 2);
   }
 
   private playhead(t: number): HTMLElement {
     const ph = h("div", { class: "playhead" });
+    this.playheads.push(ph);
     ph.style.left = `${t * this.unit + this.unit / 2}px`;
     return ph;
   }
