@@ -80,11 +80,20 @@ css =
     \.sidebar { background: #1e1e21; border-left: 1px solid rgba(255,255,255,0.08); }\n\
     \.sidebar .heading { font-weight: 600; padding: 12px 14px 4px 14px; }\n\
     \.dim { color: #8b8b93; font-size: 12px; }\n\
+    \.msg-user { background: #2a2a2e; border-radius: 10px; padding: 7px 10px; }\n\
+    \.msg-assistant { padding: 0 2px; }\n\
+    \.msg-step { color: #8b8b93; font-size: 12px; }\n\
+    \.msg-error { color: #ff7a7a; font-size: 12px; }\n\
+    \.msg-failed { color: #ff9a8a; font-size: 12px; }\n\
+    \.composer-bar { padding: 8px; border-top: 1px solid rgba(255,255,255,0.08); }\n\
+    \.composer-box { background: #111113; border: 1px solid rgba(255,255,255,0.16); border-radius: 8px; padding: 4px 6px; }\n\
+    \.composer, .composer text { background-color: #111113; color: #ededef; }\n\
     \.board-top { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.08); }\n\
     \.chip { padding: 2px 10px; min-height: 24px; border-radius: 6px; color: #a4a4ac; font-size: 12px; }\n\
     \.chip.on { background-color: rgba(91,140,255,0.16); color: #8eb0ff; }\n\
     \stackswitcher { background: #161618; border-radius: 7px; padding: 2px; }\n\
-    \stackswitcher button { padding: 2px 14px; min-height: 24px; font-size: 12px; border-radius: 5px; }\n\
+    \stackswitcher button { padding: 2px 14px; min-height: 24px; font-size: 12px; border-radius: 5px; background: transparent; color: #a4a4ac; }\n\
+    \stackswitcher button:checked { background-color: #2a2a2e; color: #ededef; }\n\
     \.counter { color: #8b8b93; font-size: 12px; font-feature-settings: \"tnum\"; min-width: 56px; }\n\
     \.sep { background: rgba(255,255,255,0.08); min-width: 1px; min-height: 18px; margin: 0 6px; }\n\
     \.segmented { background: #161618; border-radius: 7px; padding: 2px; }\n\

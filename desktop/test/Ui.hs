@@ -18,11 +18,13 @@ import System.Exit (exitFailure)
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
 
+import Data.Aeson qualified as Aeson
 import Data.Text qualified as Text
 import GI.Cairo.Render qualified as C
 import GI.Cairo.Render.Connector qualified as Connector
 import GI.Gtk qualified as Gtk
 
+import Anima.Desktop.Assistant (Model (..), Reply (..), Stop (..), ToolUse (..))
 import Anima.Desktop.Backend (Backend (..), localBackend)
 import Anima.Desktop.Config (Connection (..))
 import Anima.Desktop.Ui
@@ -260,6 +262,44 @@ main = do
     w.click "Remove reference" >> pump 100
     r5 <- state
     check "Remove takes it off the board" (refCount r5 == (if isJust ffmpeg then 1 else 0)) (show (refCount r5))
+    -- The assistant, with a scripted model: it reads what is on screen, draws a circle,
+    -- looks at the frame, and answers; each change is an ordinary undoable edit.
+    replies <- newIORef (0 :: Int)
+    let
+        circle = Aeson.object ["kind" Aeson..= ("shape" :: Text), "layer" Aeson..= ("line" :: Text), "shape" Aeson..= ("ellipse" :: Text), "color" Aeson..= ("#c2413b" :: Text), "size" Aeson..= (6 :: Int), "opacity" Aeson..= (1 :: Int), "fill" Aeson..= ("#f3c843" :: Text), "center" Aeson..= [960 :: Int, 300], "width" Aeson..= (240 :: Int), "height" Aeson..= (240 :: Int), "rotation" Aeson..= (0 :: Int)]
+        reply said calls stop = Reply {said = said, calls = calls, stop = stop, keep = Aeson.object ["role" Aeson..= ("assistant" :: Text), "content" Aeson..= said]}
+        script n = case n of
+            0 -> reply "A sun, then." [ToolUse "t1" "editor_state" (Aeson.object []), ToolUse "t2" "add_items" (Aeson.object ["drawing" Aeson..= (1 :: Int), "items" Aeson..= [circle]])] WantsTools
+            1 -> reply "" [ToolUse "t3" "preview" (Aeson.object ["frame" Aeson..= (1 :: Int), "width" Aeson..= (320 :: Int)]), ToolUse "t4" "add_items" (Aeson.object ["drawing" Aeson..= (1 :: Int), "items" Aeson..= [Aeson.object ["kind" Aeson..= ("blob" :: Text)]]])] WantsTools
+            _ -> reply "Here is the sun, top centre." [] Done
+        scripted =
+            Model
+                { label = "scripted model"
+                , ask = \_ _ _ -> do
+                    n <- readIORef replies
+                    modifyIORef' replies (+ 1)
+                    pure (Right (script n))
+                , userTurn = \t -> [Aeson.object ["role" Aeson..= ("user" :: Text), "content" Aeson..= t]]
+                , resultTurn = \outs ->
+                    [Aeson.object ["role" Aeson..= ("user" :: Text), "content" Aeson..= length outs] | not (null outs)]
+                }
+    w.connectAssistant (Just scripted)
+    itemsBefore <- length . kinds <$> state
+    w.click "+ Layer" >> pump 30
+    w.tellAssistant "Draw a sun"
+    c1 <- waitFor w 8000 (\p -> not p.chatBusy && length p.chatLog >= 4)
+    let
+        roles = map fst c1.chatLog
+        said = [t | ("assistant", t) <- c1.chatLog]
+        steps = [t | ("step", t) <- c1.chatLog]
+        refused = [t | ("failed", t) <- c1.chatLog]
+    check "the assistant draws, looks, and answers" (take 1 roles == ["user"] && said == ["A sun, then.", "Here is the sun, top centre."] && length steps == 3) (show c1.chatLog)
+    check "its circle is on the drawing" ("shape" `elem` kinds c1) (show (kinds c1))
+    check "a rejected item comes back as the parser's words" (any ("items: 0: kind:" `Text.isInfixOf`) refused) (show refused)
+    snapshot whole (shots </> "08-assistant.png")
+    void (w.key "z" True False) >> pump 30
+    c2 <- state
+    check "⌘Z undoes the assistant's change" ("shape" `notElem` kinds c2) (show (kinds c2, itemsBefore))
     -- Saving: a moment after the last edit, the folder has what the window has.
     s13 <- waitFor w 6000 (\p -> not p.unsaved && p.note == "Saved")
     check "it saves" (not s13.unsaved && s13.note == "Saved") (Text.unpack s13.note)

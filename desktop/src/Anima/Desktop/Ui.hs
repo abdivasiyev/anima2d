@@ -10,25 +10,30 @@ started from; if someone saved first, this version is kept as a copy.
 module Anima.Desktop.Ui (runApp, Window (..), Probe (..), Pointer (..), Phase (..), buildWindow, createProject) where
 
 import Anima.Ids (newUuid)
+import Anima.Tools (ToolCall (..), ToolSpec (..), instructions, int, projectTool, projectTools)
 import Anima.Types.Parse (Parse (..))
 import Anima.Types.Project hiding (duration)
 import Control.Concurrent (forkIO)
-import Control.Exception (SomeException, try)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (forM, forM_, unless, void, when, zipWithM_)
 import Data.Char (toLower)
 import Data.GI.Base (AttrOp (..), get, new, on)
+import Data.GI.Base.ManagedPtr (castTo)
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Text (Text)
 import Numeric (showHex)
-import System.FilePath (takeBaseName, takeExtension)
+import System.FilePath (takeBaseName, takeExtension, (</>))
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as LBS
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEnc
 import GI.Cairo.Render qualified as C
 import GI.Cairo.Render.Connector qualified as Connector
 import GI.Cairo.Render.Matrix qualified as M
@@ -38,12 +43,14 @@ import GI.GdkPixbuf qualified as Pixbuf
 import GI.Gtk qualified as Gtk
 import GI.Pango qualified as Pango
 
+import Anima.Desktop.Assistant (Model (..), Provider (..), Reply (..), Settings (..), Stop (..), ToolOutcome (..), ToolUse (..), connectModel, defaultSettings, loadSettings, parseSettings, providerName, saveSettings)
 import Anima.Desktop.Backend (Backend (..), Saved (..), localBackend, remoteBackend)
 import Anima.Desktop.Config (Connection (..), cacheFolder, defaultFolder, loadConnection, saveConnection)
 import Anima.Desktop.Draw (Pictures, drawCel, drawItem, drawItems)
 import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
-import Anima.Desktop.Scene (Env (..), celAt, drawFrame, drawLayers, duration, newCache, placement)
+import Anima.Desktop.Scene (Env (..), celAt, drawFrame, drawLayers, duration, newCache, placement, renderPng)
+import Anima.Desktop.Secrets (ApiKey, keyText, loadKey, parseApiKey, saveKey)
 import Anima.Desktop.Style (accent, applyStyle, dimText, ground, hairline, iconImage, rgb, rgba, rounded, surface, textColour, uiText, workspace)
 import Anima.Desktop.Video (frameAt, lengthOf, newFrames)
 
@@ -82,6 +89,11 @@ data Board = Board
     , shown :: [(Text, Media, Bool)]
     , panFrom :: Maybe (Double, Double, Double, Double)
     }
+
+{- | The assistant's conversation: the model, what was said (in its wire form), whether a
+turn is running, and the lines on screen (who, what) for tests.
+-}
+data Chat = Chat {talker :: Maybe Model, history :: [Aeson.Value], busy :: Bool, cancelled :: Bool, shownLines :: [(Text, Text)]}
 
 -- | A stroke or shape being drawn: its points in the layer's own space.
 data Draft = Draft {pts :: [(Double, Double, Double)], start :: (Double, Double), seed :: Int}
@@ -163,6 +175,25 @@ background work done = void . forkIO $ do
     r <- work
     onMain (done r)
 
+-- | Run on the GTK thread and wait for the answer (from another thread).
+onMainWait :: IO a -> IO a
+onMainWait act = do
+    box <- newEmptyMVar
+    onMain (try act >>= putMVar box)
+    takeMVar box >>= either (\(e :: SomeException) -> throwIO e) pure
+
+{- | The assistant's tools: the project's, and the editor's own (what is on screen, a
+look at a frame, undo and redo).
+-}
+assistantTools :: [ToolSpec]
+assistantTools =
+    projectTools
+        <> [ ToolSpec "editor_state" "What the person is looking at: the frame (from 1), the layer and drawing being edited, and how many items are selected." [] []
+           , ToolSpec "preview" "See a frame as it exports: a PNG of the whole picture (every visible layer, through the camera). Use it to check what you drew." [("frame", int "Frame number on the timeline, from 1 (default 1)"), ("width", int "Image width in pixels, 64 to 1920 (default 960)")] []
+           , ToolSpec "undo" "Undo the last change in the editor (yours or the person's)." [] []
+           , ToolSpec "redo" "Redo the last undone change." [] []
+           ]
+
 -- | Once, after `ms` milliseconds.
 after :: Int -> IO () -> IO GLib.Source
 after ms act = do
@@ -187,6 +218,10 @@ data Window = Window
     , click :: Text -> IO ()
     , addReferenceFile :: FilePath -> IO ()
     -- ^ A picture or video file onto the reference board, as + does after its dialog.
+    , connectAssistant :: Maybe Model -> IO ()
+    -- ^ The assistant's model (a test gives its own).
+    , tellAssistant :: Text -> IO ()
+    -- ^ A message to the assistant, as Send does.
     }
 
 data Phase = Press | Move | Release
@@ -210,6 +245,9 @@ data Probe = Probe
     , screenOf :: (Double, Double) -> (Double, Double)
     , boardShows :: Bool
     -- ^ Whether the board has a picture or still on screen.
+    , chatLog :: [(Text, Text)]
+    -- ^ The assistant's conversation as shown: (user | assistant | step | failed | error, text).
+    , chatBusy :: Bool
     }
 
 runApp :: IO ()
@@ -432,10 +470,59 @@ buildWindow = do
     Gtk.boxPackStart boardPage boardView True True 0
     Gtk.boxPackStart boardPage boardEmpty True True 0
     Gtk.boxPackStart boardPage boardFoot False False 0
-    assistant <- chatPlaceholder
-    side <- new Gtk.Stack [#transitionType := Gtk.StackTransitionTypeCrossfade, #transitionDuration := 100]
-    Gtk.stackAddTitled side boardPage "board" "References"
+    -- The assistant: a conversation with a model that edits the open project.
+    chatRef <- newIORef Chat {talker = Nothing, history = [], busy = False, cancelled = False, shownLines = []}
+    chatModelL <- Gtk.labelNew (Just "Not connected")
+    addClass chatModelL "dim"
+    Gtk.labelSetXalign chatModelL 0
+    Gtk.labelSetEllipsize chatModelL Pango.EllipsizeModeEnd
+    chatNewB <- iconButton "newChat" "New conversation"
+    chatSetB <- iconButton "settings" "Connect a model…"
+    chatTop <- Gtk.boxNew Gtk.OrientationHorizontal 2
+    addClass chatTop "board-top"
+    Gtk.widgetSetMarginStart chatModelL 6
+    Gtk.boxPackStart chatTop chatModelL True True 0
+    Gtk.boxPackEnd chatTop chatSetB False False 0
+    Gtk.boxPackEnd chatTop chatNewB False False 0
+    chatList <- Gtk.boxNew Gtk.OrientationVertical 10
+    forM_ [Gtk.widgetSetMarginStart, Gtk.widgetSetMarginEnd, Gtk.widgetSetMarginTop, Gtk.widgetSetMarginBottom] $ \m -> m chatList 12
+    chatScroll <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+    Gtk.containerAdd chatScroll chatList
+    chatEmpty <- Gtk.labelNew (Just "Ask for a drawing, a change or an animation. The assistant works on this project with the editor's own tools, and every change it makes can be undone with ⌘Z.")
+    addClass chatEmpty "dim"
+    Gtk.labelSetLineWrap chatEmpty True
+    Gtk.labelSetMaxWidthChars chatEmpty 32
+    Gtk.labelSetJustify chatEmpty Gtk.JustificationCenter
+    Gtk.boxPackStart chatList chatEmpty False False 24
+    composer <- new Gtk.TextView [#wrapMode := Gtk.WrapModeWordChar, #acceptsTab := False, #leftMargin := 2, #rightMargin := 2]
+    addClass composer "composer"
+    composerScroll <- new Gtk.ScrolledWindow [#hscrollbarPolicy := Gtk.PolicyTypeNever]
+    Gtk.widgetSetSizeRequest composerScroll (-1) 64
+    Gtk.containerAdd composerScroll composer
+    addClass composerScroll "composer-box"
+    sendB <- iconButton "send" "Send (Enter)"
+    addClass sendB "primary"
+    stopB <- iconButton "stop" "Stop"
+    chatHint <- Gtk.labelNew (Just "Enter sends · Shift+Enter starts a new line")
+    addClass chatHint "dim"
+    Gtk.labelSetXalign chatHint 0
+    composerRow <- Gtk.boxNew Gtk.OrientationHorizontal 6
+    Gtk.boxPackStart composerRow composerScroll True True 0
+    sendCol <- Gtk.boxNew Gtk.OrientationVertical 4
+    Gtk.boxPackEnd sendCol sendB False False 0
+    Gtk.boxPackEnd sendCol stopB False False 0
+    Gtk.boxPackStart composerRow sendCol False False 0
+    chatBottom <- Gtk.boxNew Gtk.OrientationVertical 4
+    addClass chatBottom "composer-bar"
+    Gtk.boxPackStart chatBottom composerRow False False 0
+    Gtk.boxPackStart chatBottom chatHint False False 0
+    assistant <- Gtk.boxNew Gtk.OrientationVertical 0
+    Gtk.boxPackStart assistant chatTop False False 0
+    Gtk.boxPackStart assistant chatScroll True True 0
+    Gtk.boxPackStart assistant chatBottom False False 0
+    side <- new Gtk.Stack [#transitionType := Gtk.StackTransitionTypeNone]
     Gtk.stackAddTitled side assistant "assistant" "Assistant"
+    Gtk.stackAddTitled side boardPage "board" "References"
     switcher <- Gtk.stackSwitcherNew
     Gtk.stackSwitcherSetStack switcher (Just side)
     Gtk.widgetSetHalign switcher Gtk.AlignCenter
@@ -802,6 +889,227 @@ buildWindow = do
     _ <- on colourB #colorSet (getColour colourB >>= \c -> modifyIORef' st (\s -> s {colour = c}))
     _ <- on sizeS #valueChanged (Gtk.rangeGetValue sizeS >>= \v -> modifyIORef' st (\s -> s {penSize = v}))
     _ <- on alphaS #valueChanged (Gtk.rangeGetValue alphaS >>= \v -> modifyIORef' st (\s -> s {penAlpha = v}))
+    -- The assistant's turns: the model asks for tools, they run here (each change one
+    -- undoable edit), their outcomes go back, until it answers.
+    let
+        chatLine role body = do
+            modifyIORef' chatRef (\c -> c {shownLines = c.shownLines <> [(role, body)]})
+            Gtk.widgetSetVisible chatEmpty False
+            w <- case role of
+                _ | role `elem` ["step", "failed"] -> do
+                    row <- Gtk.boxNew Gtk.OrientationHorizontal 6
+                    img <- iconImage (if role == "failed" then "alert" else "step") 14
+                    l <- Gtk.labelNew (Just body)
+                    addClass l (if role == "failed" then "msg-failed" else "msg-step")
+                    Gtk.labelSetXalign l 0
+                    Gtk.labelSetLineWrap l True
+                    Gtk.boxPackStart row img False False 0
+                    Gtk.boxPackStart row l True True 0
+                    toW row
+                _ -> do
+                    l <- Gtk.labelNew (Just body)
+                    addClass l ("msg-" <> role)
+                    Gtk.labelSetLineWrap l True
+                    Gtk.labelSetLineWrapMode l Pango.WrapModeWordChar
+                    Gtk.labelSetSelectable l True
+                    Gtk.labelSetXalign l 0
+                    when (role == "user") $ do
+                        Gtk.widgetSetHalign l Gtk.AlignEnd
+                        Gtk.labelSetMaxWidthChars l 30
+                    toW l
+            Gtk.boxPackStart chatList w False False 0
+            Gtk.widgetShowAll w
+            -- Down to the newest line once it is laid out.
+            void . GLib.idleAdd GLib.PRIORITY_LOW $ do
+                adj <- Gtk.scrolledWindowGetVadjustment chatScroll
+                up <- Gtk.adjustmentGetUpper adj
+                Gtk.adjustmentSetValue adj up
+                pure False
+        chatBusyShown b = do
+            Gtk.widgetSetVisible stopB b
+            Gtk.widgetSetSensitive sendB (not b)
+        chatConnected = do
+            c <- readIORef chatRef
+            Gtk.labelSetText chatModelL (maybe "Not connected: connect a model" (.label) c.talker)
+        systemPrompt = do
+            s <- readIORef st
+            pure $ case s.open of
+                Nothing -> instructions
+                Just o ->
+                    instructions
+                        <> "\n\nYou are the assistant inside the anima2D desktop editor, working on the open project \""
+                        <> o.view.title
+                        <> "\" ("
+                        <> Text.pack (show o.view.width <> " × " <> show o.view.height <> ", " <> show o.view.rate <> " fps")
+                        <> "). The person sees each change as you make it and can undo each one. editor_state tells you what they are looking at. After drawing, call preview to look at the frame and fix what is off. Keep replies short and plain."
+        -- What a tool did, in a few words for the conversation.
+        stepText (ToolUse _ nm args) = case (nm, args) of
+            ("add_items", Aeson.Object o) -> "Drew " <> count (KeyMap.lookup "items" o) <> " on drawing " <> num (KeyMap.lookup "drawing" o)
+            ("replace_items", Aeson.Object o) -> "Redrew drawing " <> num (KeyMap.lookup "drawing" o)
+            ("add_drawing", _) -> "Added a drawing"
+            ("add_layer", Aeson.Object o) | Just (Aeson.String n) <- KeyMap.lookup "name" o -> "Added the layer " <> n
+            ("set_layer", _) -> "Changed a layer"
+            ("add_light", _) -> "Added a light"
+            ("set_camera", _) -> "Set the camera"
+            ("preview", Aeson.Object o) -> "Looked at frame " <> maybe "1" (num . Just) (KeyMap.lookup "frame" o)
+            ("preview", _) -> "Looked at frame 1"
+            ("undo", _) -> "Undid the last change"
+            ("redo", _) -> "Redid it"
+            ("item_format", _) -> "Read the item format"
+            ("editor_state", _) -> "Looked at what you are viewing"
+            ("get_project", _) -> "Read the project"
+            ("get_drawing", Aeson.Object o) -> "Read drawing " <> num (KeyMap.lookup "drawing" o)
+            _ -> nm
+            where
+                num = \case
+                    Just (Aeson.Number n) -> Text.pack (show (round n :: Int))
+                    _ -> "?"
+                count = \case
+                    Just (Aeson.Array xs) -> Text.pack (show (length xs)) <> (if length xs == 1 then " item" else " items")
+                    _ -> "items"
+        -- One tool, on the GTK thread.
+        runAssistantTool use@(ToolUse cid nm args) = do
+            s <- readIORef st
+            let
+                answer t = pure (ToolOutcome cid t Nothing False)
+                refuse why = chatLine "failed" (stepText use <> ": " <> why) >> pure (ToolOutcome cid why Nothing True)
+                encodeT = TextEnc.decodeUtf8 . LBS.toStrict . Aeson.encode
+            case (s.open, nm) of
+                (Nothing, _) -> refuse "no project is open"
+                (Just o, "editor_state") -> do
+                    let
+                        here = lookup s.layer (zip [0 ..] o.view.stack)
+                        drawingNo = case here of
+                            Just LayerView {kind = DrawingView holdLast cels} -> fmap (+ 1) (celAt holdLast cels s.playhead)
+                            _ -> Nothing
+                    chatLine "step" (stepText use)
+                    answer . encodeT $ Aeson.object ["frame" Aeson..= (s.playhead + 1), "frames" Aeson..= duration o.view, "layer" Aeson..= fmap (.layerId) here, "layerName" Aeson..= fmap (.name) here, "drawing" Aeson..= drawingNo, "selectedItems" Aeson..= length s.selection]
+                (Just o, "preview") -> do
+                    let
+                        number k = case args of
+                            Aeson.Object a | Just (Aeson.Number n) <- KeyMap.lookup k a -> Just (round n :: Int)
+                            _ -> Nothing
+                        frame = fromMaybe 1 (number "frame")
+                        width = fromMaybe 960 (number "width")
+                    if frame < 1 || frame > duration o.view
+                        then refuse ("expected a frame from 1 to " <> Text.pack (show (duration o.view)))
+                        else
+                            if width < 64 || width > 1920
+                                then refuse "expected a width from 64 to 1920 pixels"
+                                else do
+                                    dir <- cacheFolder
+                                    let
+                                        file = dir </> "assistant-preview.png"
+                                    renderPng o.env.pictures o.view (frame - 1) width file
+                                    png <- BS.readFile file
+                                    chatLine "step" (stepText use)
+                                    pure (ToolOutcome cid ("Frame " <> Text.pack (show frame) <> " of " <> Text.pack (show (duration o.view)) <> ", as exported (white paper, through the camera).") (Just png) False)
+                (Just _, "undo") -> do
+                    if null s.past then refuse "nothing to undo" else undo >> chatLine "step" (stepText use) >> answer "Undone."
+                (Just _, "redo") -> do
+                    if null s.future then refuse "nothing to redo" else redo >> chatLine "step" (stepText use) >> answer "Redone."
+                (Just o, _) -> case projectTool nm args of
+                    Nothing -> refuse "there is no such tool"
+                    Just (Left why) -> refuse why
+                    Just (Right (Reads f)) -> case f o.project of
+                        Left why -> refuse why
+                        Right (Aeson.String t) -> chatLine "step" (stepText use) >> answer t
+                        Right v -> chatLine "step" (stepText use) >> answer (encodeT v)
+                    Just (Right (Changes f)) -> case f o.project of
+                        Left why -> refuse why
+                        Right p' -> do
+                            commit (const (Right p'))
+                            chatLine "step" (stepText use)
+                            answer ("Done. The project has " <> Text.pack (show (duration (viewProject p'))) <> " frames now.")
+        finishTurn = do
+            modifyIORef' chatRef (\c -> c {busy = False, cancelled = False})
+            chatBusyShown False
+        sendChat raw = do
+            c <- readIORef chatRef
+            let
+                text = Text.strip raw
+            case c.talker of
+                _ | Text.null text || c.busy -> pure ()
+                Nothing -> chatLine "error" "Connect a model first: the gear above."
+                Just m -> do
+                    Gtk.stackSetVisibleChildName side "assistant"
+                    chatLine "user" text
+                    modifyIORef' chatRef (\x -> x {history = x.history <> m.userTurn text, busy = True, cancelled = False})
+                    chatBusyShown True
+                    let
+                        loop :: Int -> IO ()
+                        loop rounds = do
+                            system <- onMainWait systemPrompt
+                            sofar <- (.history) <$> readIORef chatRef
+                            reply <- m.ask system assistantTools sofar
+                            again <- onMainWait $ case reply of
+                                Left why -> chatLine "error" why >> finishTurn >> pure False
+                                Right r -> do
+                                    modifyIORef' chatRef (\x -> x {history = x.history <> [r.keep]})
+                                    unless (Text.null r.said) (chatLine "assistant" r.said)
+                                    stopped <- (.cancelled) <$> readIORef chatRef
+                                    case r.stop of
+                                        WantsTools
+                                            | stopped || rounds >= 40 -> do
+                                                -- Every asked-for tool still gets an answer, so the conversation stays whole.
+                                                let
+                                                    why = if stopped then "Stopped by the person before it ran." else "Stopped: too many steps in one go."
+                                                modifyIORef' chatRef (\x -> x {history = x.history <> m.resultTurn [ToolOutcome u.callId why Nothing True | u <- r.calls]})
+                                                chatLine "error" why
+                                                finishTurn
+                                                pure False
+                                            | otherwise -> do
+                                                outs <- mapM runAssistantTool r.calls
+                                                modifyIORef' chatRef (\x -> x {history = x.history <> m.resultTurn outs})
+                                                pure True
+                                        Done -> finishTurn >> pure False
+                                        CutOff -> chatLine "error" "The answer was cut short: it ran out of room." >> finishTurn >> pure False
+                                        Declined why -> chatLine "error" ("The model declined this." <> (if Text.null why then "" else " " <> why)) >> finishTurn >> pure False
+                            when again (loop (rounds + 1))
+                    void (forkIO (loop 0))
+        useModel m = do
+            modifyIORef' chatRef (\c -> c {talker = m})
+            chatConnected
+        -- The saved connection, at start or after the dialog: the key from the keychain.
+        reconnect = do
+            saved <- loadSettings
+            forM_ saved $ \cfg -> background (loadKey (providerName cfg.provider)) $ \key -> case (cfg.provider, key) of
+                (Anthropic, Nothing) -> Gtk.labelSetText chatModelL "Connect a model: the key is missing"
+                _ -> connectModel cfg (maybe "" keyText key) >>= useModel . Just
+    _ <- on sendB #clicked $ do
+        buf <- Gtk.textViewGetBuffer composer
+        (a, b) <- Gtk.textBufferGetBounds buf
+        t <- Gtk.textBufferGetText buf a b False
+        c <- readIORef chatRef
+        unless (c.busy || Text.null (Text.strip t)) (Gtk.textBufferSetText buf "" (-1))
+        sendChat t
+    _ <- on stopB #clicked (modifyIORef' chatRef (\c -> c {cancelled = True}) >> Gtk.labelSetText chatModelL "Stopping after this step…")
+    _ <- on composer #keyPressEvent $ \ev -> do
+        kv <- get ev #keyval
+        mods <- get ev #state
+        name <- fromMaybe "" <$> Gdk.keyvalName kv
+        if name `elem` ["Return", "KP_Enter"] && Gdk.ModifierTypeShiftMask `notElem` mods
+            then Gtk.buttonClicked sendB >> pure True
+            else pure False
+    _ <- on chatNewB #clicked $ do
+        c <- readIORef chatRef
+        unless c.busy $ do
+            writeIORef chatRef c {history = [], shownLines = []}
+            kids <- Gtk.containerGetChildren chatList
+            forM_ kids $ \k -> do
+                isHint <- (==) <$> toW chatEmpty <*> pure k
+                unless isHint (Gtk.widgetDestroy k)
+            Gtk.widgetSetVisible chatEmpty True
+    _ <- on chatSetB #clicked $ do
+        saved <- loadSettings
+        chosen <- connectDialog win saved
+        forM_ chosen $ \(cfg, key) -> do
+            saveSettings cfg
+            stored <- case key of
+                Just k -> saveKey (providerName cfg.provider) k
+                Nothing -> pure (Right ())
+            either say (const reconnect) stored
+    reconnect
     -- The reference board: add, follow or play, take a colour, trace, remove; zoom and pan.
     lastStills <- newIORef (Map.empty :: Map.Map Text C.Surface)
     let
@@ -819,6 +1127,7 @@ buildWindow = do
                         modifyIORef' boardRef (\x -> x {showing = length rs})
                         commit (addReference (Aeson.object ["asset" Aeson..= asset, "media" Aeson..= (if video then "video" else "image" :: Text), "name" Aeson..= (if Text.null base then "Reference" else base), "follow" Aeson..= True]))
                         refreshPictures
+                        Gtk.stackSetVisibleChildName side "board"
                         say "Added to the board"
         endOwnPlay = do
             modifyIORef' boardRef (\x -> x {ownPlay = Nothing})
@@ -1240,15 +1549,24 @@ buildWindow = do
                     pure True
                 n | n `elem` ["shift_l", "shift_r"] -> writeIORef st s {shiftHeld = False} >> pure False
                 _ -> pure False
+    let
+        -- Typing in a text field (the assistant's, a dialog's) is not the editor's shortcuts.
+        typing = do
+            focused <- Gtk.windowGetFocus win
+            case focused of
+                Nothing -> pure False
+                Just f -> (\a b -> isJust a || isJust b) <$> castTo Gtk.TextView f <*> castTo Gtk.Entry f
     _ <- on win #keyPressEvent $ \ev -> do
         kv <- get ev #keyval
         mods <- get ev #state
         name <- fromMaybe "" <$> Gdk.keyvalName kv
-        onKey name (any (`elem` mods) [Gdk.ModifierTypeControlMask, Gdk.ModifierTypeMetaMask, Gdk.ModifierTypeSuperMask]) (Gdk.ModifierTypeShiftMask `elem` mods)
+        intoText <- typing
+        if intoText then pure False else onKey name (any (`elem` mods) [Gdk.ModifierTypeControlMask, Gdk.ModifierTypeMetaMask, Gdk.ModifierTypeSuperMask]) (Gdk.ModifierTypeShiftMask `elem` mods)
     _ <- on win #keyReleaseEvent $ \ev -> do
         kv <- get ev #keyval
         name <- fromMaybe "" <$> Gdk.keyvalName kv
-        onKeyUp name
+        intoText <- typing
+        if intoText then pure False else onKeyUp name
     _ <- on win #focusOutEvent $ \_ -> modifyIORef' st (\s -> s {spaceHeld = False, shiftHeld = False}) >> pure False
     Gtk.widgetShowAll win
     showOptions BrushTool
@@ -1256,6 +1574,7 @@ buildWindow = do
     let
         probe = do
             onBoard <- boardSurface
+            chatNow <- readIORef chatRef
             s <- readIORef st
             msg <- Gtk.labelGetText saveState
             pure
@@ -1270,12 +1589,14 @@ buildWindow = do
                     , atFrame = s.playhead
                     , screenOf = \(cx, cy) -> (s.panX + cx * s.magnify, s.panY + cy * s.magnify)
                     , boardShows = isJust onBoard
+                    , chatLog = chatNow.shownLines
+                    , chatBusy = chatNow.busy
                     }
         buttons = [("+ Drawing", newCelB), ("Duplicate", dupCelB), ("Delete drawing", delCelB), ("Hold +", moreB), ("Hold −", lessB), ("+ Layer", addLayerB), ("Hide layer", hideB), ("Lock layer", lockB), ("Delete layer", delLayerB), ("Undo", undoBtn), ("Redo", redoBtn), ("Play", playBtn), ("◀", prevBtn), ("▶", nextBtn), ("Fit", fitBtn), ("Trace", traceB), ("Remove reference", removeRefB)]
         clickNamed n = case n of
             "Follow" -> Gtk.buttonClicked followB
             _ -> forM_ (lookup n buttons) Gtk.buttonClicked
-    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile}
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
@@ -1695,6 +2016,70 @@ projectCard b p openIt = do
         Left _ -> pure ()
     pure btn
 
+{- | Which model the assistant talks to: the provider, its address, the model and the key
+(left empty to keep the saved one).
+-}
+connectDialog :: Gtk.Window -> Maybe Settings -> IO (Maybe (Settings, Maybe ApiKey))
+connectDialog parent current = do
+    d <- new Gtk.Dialog [#title := "Connect a model", #modal := True]
+    Gtk.windowSetTransientFor d (Just parent)
+    area <- Gtk.dialogGetContentArea d
+    grid <- new Gtk.Grid [#rowSpacing := 10, #columnSpacing := 12, #margin := 18]
+    providerC <- Gtk.comboBoxTextNew
+    Gtk.comboBoxTextAppend providerC (Just "anthropic") "Anthropic (Claude)"
+    Gtk.comboBoxTextAppend providerC (Just "openai") "OpenAI-compatible (OpenAI, Ollama, LM Studio…)"
+    urlE <- Gtk.entryNew
+    modelE <- Gtk.entryNew
+    keyE <- Gtk.entryNew
+    Gtk.entrySetVisibility keyE False
+    Gtk.entrySetPlaceholderText keyE (Just "Leave empty to keep the saved key")
+    note <- Gtk.labelNew (Just "The key is kept in this computer's keychain, never in a file of the project.")
+    addClass note "dim"
+    Gtk.labelSetLineWrap note True
+    Gtk.labelSetMaxWidthChars note 46
+    Gtk.labelSetXalign note 0
+    forM_ (zip [0 ..] [("Provider", toW providerC), ("Address", toW urlE), ("Model", toW modelE), ("API key", toW keyE)]) $ \(row, (lbl, mk)) -> do
+        l <- Gtk.labelNew (Just lbl)
+        Gtk.labelSetXalign l 1
+        w <- mk
+        Gtk.widgetSetHexpand w True
+        Gtk.gridAttach grid l 0 row 1 1
+        Gtk.gridAttach grid w 1 row 1 1
+    Gtk.gridAttach grid note 0 4 2 1
+    Gtk.containerAdd area grid
+    let
+        fill cfg = do
+            Gtk.entrySetText urlE cfg.url
+            Gtk.entrySetText modelE cfg.model
+    case current of
+        Just cfg -> Gtk.comboBoxSetActiveId providerC (Just (providerName cfg.provider)) >> fill cfg
+        Nothing -> Gtk.comboBoxSetActiveId providerC (Just "anthropic") >> fill (defaultSettings Anthropic)
+    _ <- on providerC #changed $ do
+        pid <- Gtk.comboBoxGetActiveId providerC
+        fill (defaultSettings (if pid == Just "openai" then OpenAICompatible else Anthropic))
+    Gtk.widgetShowAll d
+    let
+        ask = do
+            okd <- dialogRun d
+            if not okd
+                then pure Nothing
+                else do
+                    pid <- Gtk.comboBoxGetActiveId providerC
+                    u <- Gtk.entryGetText urlE
+                    m <- Gtk.entryGetText modelE
+                    k <- Gtk.entryGetText keyE
+                    let
+                        cfg = parseSettings (Aeson.object ["provider" Aeson..= fromMaybe "anthropic" pid, "url" Aeson..= u, "model" Aeson..= m])
+                        key = if Text.null (Text.strip k) then Right Nothing else Just <$> parseApiKey k
+                    case (,) <$> cfg <*> key of
+                        Right r -> pure (Just r)
+                        Left why -> do
+                            Gtk.labelSetText note why
+                            ask
+    r <- ask
+    Gtk.widgetDestroy d
+    pure r
+
 -- | Asks for a picture or video file to put on the board.
 chooseFile :: Gtk.Window -> IO (Maybe FilePath)
 chooseFile parent = do
@@ -1784,20 +2169,6 @@ getColour b = do
     let
         byte v = let n = max 0 (min 255 (round (v * 255) :: Int)) in (if n < 16 then "0" else "") <> showHex n ""
     pure (Text.pack ("#" <> byte r <> byte g <> byte bl))
-
-chatPlaceholder :: IO Gtk.Box
-chatPlaceholder = do
-    box <- Gtk.boxNew Gtk.OrientationVertical 4
-    note <- Gtk.labelNew (Just "Chat with a model about this project comes next: it will draw, light and animate through the same tools agents use.")
-    addClass note "dim"
-    Gtk.labelSetXalign note 0
-    Gtk.widgetSetMarginTop note 12
-    Gtk.labelSetLineWrap note True
-    Gtk.labelSetMaxWidthChars note 34
-    Gtk.widgetSetMarginStart note 14
-    Gtk.widgetSetMarginEnd note 14
-    Gtk.boxPackStart box note False False 0
-    pure box
 
 dialogRun :: Gtk.Dialog -> IO Bool
 dialogRun d = do

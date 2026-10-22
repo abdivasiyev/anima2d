@@ -33,6 +33,7 @@ library
                     , Anima.Config
                     , Anima.Ids
                     , Anima.Mcp
+                    , Anima.Tools
                     , Anima.Renders
                     , Anima.Server
                     , Anima.Store

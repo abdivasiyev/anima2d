@@ -121,10 +121,17 @@ It draws with the browser's brushes (pen, pencil, marker, paint), scatter brushe
 eraser, shapes, text and the paint bucket; selects, moves, scales and turns items; adds,
 duplicates and holds drawings and layers, with undo and onion skin; and it updates live
 when another device or an agent saves. The sidebar holds the reference board (videos
-need ffmpeg on the PATH); the assistant chat comes next.
+need ffmpeg on the PATH) and the assistant.
+
+The assistant is a chat with a model of your choosing that draws and animates in the open
+project with the same tools agents get over MCP, plus a look at the frame it drew. Connect
+it with the gear: Anthropic (an API key; it uses Claude Opus 5.5), or any server that
+speaks OpenAI's chat completions, such as OpenAI or a local model in Ollama or LM Studio.
+The key stays in the system keychain. Each change it makes is an ordinary edit you can
+undo.
 
 `just desktop-ui` drives the real window offscreen (drawing, undo, selection, the board,
-saving) and writes snapshots of it to `desktop/ui-snapshots/`.
+the assistant with a scripted model, saving) and writes snapshots of it to `desktop/ui-snapshots/`.
 
 `anima2d-desktop render <project.anima2d.json> <frame> <width> <out.png>` draws one frame
 without opening a window.

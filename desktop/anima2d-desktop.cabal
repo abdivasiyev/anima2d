@@ -39,6 +39,8 @@ library
                     , Anima.Desktop.Icons
                     , Anima.Desktop.Style
                     , Anima.Desktop.Video
+                    , Anima.Desktop.Assistant
+                    , Anima.Desktop.Secrets
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d
@@ -57,6 +59,8 @@ library
                     , http-client-tls
                     , http-types
                     , process
+                    , unix
+                    , base64-bytestring
                     , vector
                     , gi-cairo-render
                     , gi-pango
@@ -98,6 +102,7 @@ test-suite ui
     ghc-options:      -threaded
     build-depends:    base >=4.20 && <5
                     , anima2d
+                    , aeson
                     , anima2d-desktop
                     , directory
                     , filepath
