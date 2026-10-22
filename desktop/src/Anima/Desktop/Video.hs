@@ -7,6 +7,7 @@ module Anima.Desktop.Video
     ( Frames
     , newFrames
     , available
+    , ffmpegPath
     , frameAt
     , lengthOf
     , step
@@ -51,6 +52,10 @@ newFrames cacheDir = do
         dir = cacheDir </> "frames"
     createDirectoryIfMissing True dir
     Frames found dir <$> newIORef Map.empty <*> newIORef Set.empty <*> newIORef Map.empty
+
+-- | The ffmpeg found, for the export.
+ffmpegPath :: Frames -> Maybe FilePath
+ffmpegPath f = f.ffmpeg
 
 available :: Frames -> Bool
 available f = isJust f.ffmpeg

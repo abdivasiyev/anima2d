@@ -3004,7 +3004,8 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
           return;
         case "arrowright":
           e.preventDefault();
-          scrub(t + 1);
+          // The arrows step through the film; dragging the ruler can still go past its end.
+          scrub(Math.min(t + 1, duration(project()) - 1));
           return;
         case "l":
           toggleLoop();

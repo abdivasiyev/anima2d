@@ -13,7 +13,7 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import GHC.Clock (getMonotonicTime)
-import System.Directory (createDirectoryIfMissing, findExecutable, getTemporaryDirectory, removeDirectoryRecursive)
+import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable, getFileSize, getTemporaryDirectory, removeDirectoryRecursive)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
@@ -27,6 +27,7 @@ import GI.Gtk qualified as Gtk
 import Anima.Desktop.Assistant (Model (..), Reply (..), Stop (..), ToolUse (..))
 import Anima.Desktop.Backend (Backend (..), localBackend)
 import Anima.Desktop.Config (Connection (..))
+import Anima.Desktop.Export (Export (..), Fit (..), Format (..), Quality (..), Size (..))
 import Anima.Desktop.Ui
 
 -- | Runs GTK's loop for `ms` milliseconds, so idle callbacks, timers and saves happen.
@@ -300,6 +301,16 @@ main = do
     void (w.key "z" True False) >> pump 30
     c2 <- state
     check "⌘Z undoes the assistant's change" ("shape" `notElem` kinds c2) (show (kinds c2, itemsBefore))
+    -- Export, as the dialogs hand it over: a small MP4 of the project.
+    let
+        film = dir </> "film.mp4"
+    case ffmpeg of
+        Nothing -> putStrLn "skip the export: no ffmpeg on the PATH"
+        Just _ -> do
+            w.exportFile Export {format = H264, size = Size "test" 480 270, quality = Standard, fit = Contain, transparent = False} film
+            e1 <- waitFor w 20000 (\p -> "Exported" `Text.isPrefixOf` p.note || "Not exported" `Text.isPrefixOf` p.note)
+            bytes <- doesFileExist film >>= \here -> if here then getFileSize film else pure 0
+            check "Export writes the film" ("Exported" `Text.isPrefixOf` e1.note && bytes > 1000) (Text.unpack e1.note <> " " <> show bytes)
     -- Saving: a moment after the last edit, the folder has what the window has.
     s13 <- waitFor w 6000 (\p -> not p.unsaved && p.note == "Saved")
     check "it saves" (not s13.unsaved && s13.note == "Saved") (Text.unpack s13.note)

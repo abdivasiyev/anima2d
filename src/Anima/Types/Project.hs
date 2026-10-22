@@ -37,6 +37,7 @@ module Anima.Types.Project
     , RimView (..)
     , LightView (..)
     , BoardView (..)
+    , TrackView (..)
     , CameraKeyView (..)
     , viewProject
     , viewItem
@@ -1950,7 +1951,12 @@ data ProjectView = ProjectView
     , colours :: [Text]
     , fontFiles :: [(Text, Text)]
     , board :: [BoardView]
+    , soundtrack :: [TrackView]
     }
+    deriving stock (Eq, Show)
+
+-- | An audio track: its asset, where it starts (frames; before 0 cuts its beginning), how loud.
+data TrackView = TrackView {asset :: Text, offset :: Int, volume :: Double, muted :: Bool}
     deriving stock (Eq, Show)
 
 -- | A picture or video on the reference board: its asset, kind, name and whether it follows.
@@ -1969,6 +1975,7 @@ viewProject p =
         , shots = map viewCamera p.camera
         , colours = map colorText p.palette
         , fontFiles = [(f.family, let AssetId a = f.fontAsset in a) | f <- p.fonts]
+        , soundtrack = [TrackView {asset = let AssetId a = t.asset in a, offset = t.offset, volume = t.volume, muted = t.muted} | t <- p.audio]
         , board = [BoardView {asset = let AssetId a = r.refAsset in a, media = r.refMedia, name = let Label n = r.refName in n, follows = r.follow} | r <- p.references]
         }
     where

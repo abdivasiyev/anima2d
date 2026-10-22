@@ -11,10 +11,13 @@ import Anima.Types.Project
 import Control.Monad (forM_, unless)
 import Data.Aeson (FromJSON (..), withObject, (.:))
 import Data.Either (lefts)
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Data.Maybe (isJust)
 import Data.Text (Text)
+import System.Directory (createDirectoryIfMissing, findExecutable, getTemporaryDirectory, listDirectory, removeDirectoryRecursive)
 import System.Exit (exitFailure)
+import System.FilePath ((</>))
+import System.Process (readProcessWithExitCode)
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -23,7 +26,9 @@ import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Map.Strict qualified as Map
 
 import Anima.Desktop.Assistant (Reply (..), Stop (..), ToolOutcome (..), ToolUse (..), anthropicReply, anthropicRequest, anthropicResults, openAIReply, openAIRequest, openAIResults)
+import Anima.Desktop.Export (Export (..), Fit (..), Format (..), Quality (..), Size (..), Track (..), exportFilm)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
+import Anima.Desktop.Scene (Env (..), newCache)
 
 import Anima.Desktop.Fill qualified as Fill
 import Anima.Desktop.Freehand qualified as Freehand
@@ -60,11 +65,58 @@ main = do
     putStrLn (show (length cases - length bad) <> " of " <> show (length cases) <> " outlines match; " <> show (length [() | Right () <- made]) <> " of " <> show (length made) <> " items parse")
     filled <- fillChecks ink
     moved <- transformChecks
+    exported <- exportChecks
     let
-        wire = wireChecks
+        wire = wireChecks <> exported
     forM_ (filled <> moved <> wire) putStrLn
     putStrLn (show (length filled + length moved) <> " fill and selection checks failed; " <> show (length wire) <> " assistant wire checks failed")
     unless (null bad && all (either (const False) (const True)) made && null filled && null moved && null wire) exitFailure
+
+-- | The bouncing ball out as each format, checked with ffprobe (skipped without ffmpeg).
+exportChecks :: IO [String]
+exportChecks = do
+    ffmpeg <- findExecutable "ffmpeg"
+    ffprobe <- findExecutable "ffprobe"
+    raw <- LBS.readFile "../examples/bouncing-ball.anima2d.json"
+    case (ffmpeg, ffprobe, Aeson.eitherDecode raw >>= either (Left . show) Right . parse @Project) of
+        (Nothing, _, _) -> putStrLn "skip the export checks: no ffmpeg on the PATH" >> pure []
+        (_, Nothing, _) -> putStrLn "skip the export checks: no ffprobe on the PATH" >> pure []
+        (_, _, Left e) -> pure ["export: " <> e]
+        (Just exe, Just probe, Right p) -> do
+            tmp <- getTemporaryDirectory
+            let
+                dir = tmp </> "anima2d-export-spec"
+                small = Size "test" 320 180
+                job f t = Export {format = f, size = small, quality = Standard, fit = Contain, transparent = t}
+                v = viewProject p
+            createDirectoryIfMissing True dir
+            cache <- newCache
+            let
+                env = Env {pictures = Map.empty, cache = cache, project = v}
+                tone = dir </> "tone.wav"
+                run f t out tracks = exportFilm (Just exe) env tracks (job f t) (dir </> out) (\_ _ -> pure ()) (pure False)
+                streams out = do
+                    (_, o, _) <- readProcessWithExitCode probe ["-v", "error", "-count_frames", "-show_entries", "stream=codec_type,width,height,pix_fmt,nb_read_frames", "-of", "csv=p=0", dir </> out] ""
+                    pure (lines o)
+            _ <- readProcessWithExitCode exe ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", tone] ""
+            h264 <- run H264 False "ball.mp4" [Track tone 6 0.5]
+            prores <- run ProRes True "ball.mov" []
+            gif <- run Gif False "ball.gif" []
+            pngs <- run PngFrames False "frames" []
+            s1 <- streams "ball.mp4"
+            s2 <- streams "ball.mov"
+            s3 <- streams "ball.gif"
+            framesOut <- length . filter (".png" `isSuffixOf`) <$> listDirectory (dir </> "frames")
+            removeDirectoryRecursive dir
+            let
+                n = show (duration p)
+                expect what ok = ["export: " <> what | not ok]
+            pure
+                $ expect ("MP4 written: " <> show h264) (h264 == Right ())
+                    <> expect ("MP4 has the frames and the tone: " <> show s1) (any (\l -> "video,320,180" `isInfixOf` l && ("," <> n) `isSuffixOf` l) s1 && any ("audio" `isPrefixOf`) s1)
+                    <> expect ("ProRes keeps the transparency: " <> show (prores, s2)) (prores == Right () && any ("yuva444p" `isInfixOf`) s2)
+                    <> expect ("GIF has every frame: " <> show (gif, s3)) (gif == Right () && any (("," <> n) `isSuffixOf`) s3)
+                    <> expect ("PNG frames, one a frame: " <> show (pngs, framesOut)) (pngs == Right () && show framesOut == n)
 
 -- | The assistant's requests and replies, both providers, as their APIs define them.
 wireChecks :: [String]

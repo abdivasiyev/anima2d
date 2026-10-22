@@ -41,6 +41,7 @@ library
                     , Anima.Desktop.Video
                     , Anima.Desktop.Assistant
                     , Anima.Desktop.Secrets
+                    , Anima.Desktop.Export
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d
@@ -91,6 +92,9 @@ test-suite spec
                     , anima2d-desktop
                     , bytestring
                     , containers
+                    , directory
+                    , filepath
+                    , process
                     , text
 
 -- Drives the real window; needs a display session, so it runs on demand (`just desktop-ui`).

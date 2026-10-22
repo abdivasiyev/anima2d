@@ -47,12 +47,13 @@ import Anima.Desktop.Assistant (Model (..), Provider (..), Reply (..), Settings 
 import Anima.Desktop.Backend (Backend (..), Saved (..), localBackend, remoteBackend)
 import Anima.Desktop.Config (Connection (..), cacheFolder, defaultFolder, loadConnection, saveConnection)
 import Anima.Desktop.Draw (Pictures, drawCel, drawItem, drawItems)
+import Anima.Desktop.Export (Export (..), Fit (..), Format (..), Quality (..), Size (..), Track (..), exportFilm, formatExtension, formatName, keepsAlpha, presets)
 import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
 import Anima.Desktop.Scene (Env (..), celAt, drawFrame, drawLayers, duration, newCache, placement, renderPng)
 import Anima.Desktop.Secrets (ApiKey, keyText, loadKey, parseApiKey, saveKey)
 import Anima.Desktop.Style (accent, applyStyle, dimText, ground, hairline, iconImage, rgb, rgba, rounded, surface, textColour, uiText, workspace)
-import Anima.Desktop.Video (frameAt, lengthOf, newFrames)
+import Anima.Desktop.Video (ffmpegPath, frameAt, lengthOf, newFrames)
 
 import Anima.Desktop.Fill qualified as Fill
 import Anima.Desktop.Geometry qualified as Geometry
@@ -222,6 +223,8 @@ data Window = Window
     -- ^ The assistant's model (a test gives its own).
     , tellAssistant :: Text -> IO ()
     -- ^ A message to the assistant, as Send does.
+    , exportFile :: Export -> FilePath -> IO ()
+    -- ^ The film to a file, as Export does after its dialogs.
     }
 
 data Phase = Press | Move | Release
@@ -297,7 +300,10 @@ buildWindow = do
     Gtk.headerBarPackStart header undoBtn
     Gtk.headerBarPackStart header redoBtn
     Gtk.headerBarPackStart header saveState
+    exportBtn <- Gtk.buttonNewWithLabel "Export"
+    addClass exportBtn "primary"
     Gtk.headerBarPackEnd header chatBtn
+    Gtk.headerBarPackEnd header exportBtn
     Gtk.headerBarPackEnd header connBtn
     Gtk.headerBarPackEnd header newBtn
     stack <- new Gtk.Stack [#transitionType := Gtk.StackTransitionTypeCrossfade, #transitionDuration := 120]
@@ -548,6 +554,7 @@ buildWindow = do
             forM_ [backBtn, undoBtn, redoBtn] $ \x -> Gtk.widgetSetVisible x editing
             Gtk.widgetSetVisible saveState editing
             Gtk.widgetSetVisible chatBtn editing
+            Gtk.widgetSetVisible exportBtn editing
             Gtk.widgetSetVisible newBtn (not editing)
     let
         redraw = Gtk.widgetQueueDraw canvas >> Gtk.widgetQueueDraw timeline >> showCounter >> refreshBoard
@@ -1110,6 +1117,47 @@ buildWindow = do
                 Nothing -> pure (Right ())
             either say (const reconnect) stored
     reconnect
+    -- Export: the choices, where to, then the frames in the background with a progress bar.
+    let
+        exportTo e out = do
+            s <- readIORef st
+            forM_ ((,) <$> s.backend <*> s.open) $ \(b, o) -> do
+                stopping <- newIORef False
+                d <- new Gtk.Dialog [#title := "Exporting", #modal := True, #deletable := False]
+                Gtk.windowSetTransientFor d (Just win)
+                area <- Gtk.dialogGetContentArea d
+                bar <- Gtk.progressBarNew
+                Gtk.progressBarSetShowText bar True
+                Gtk.widgetSetSizeRequest bar 360 (-1)
+                forM_ [Gtk.widgetSetMarginStart, Gtk.widgetSetMarginEnd, Gtk.widgetSetMarginTop, Gtk.widgetSetMarginBottom] $ \m -> m bar 18
+                Gtk.containerAdd area bar
+                _ <- Gtk.dialogAddButton d "Stop" (fromIntegral (fromEnum Gtk.ResponseTypeCancel))
+                _ <- on d #response (\_ -> writeIORef stopping True)
+                Gtk.widgetShowAll d
+                say "Exporting…"
+                cache <- newCache
+                let
+                    env = Env {pictures = o.env.pictures, cache, project = o.view}
+                    progress n total = onMain $ do
+                        Gtk.progressBarSetFraction bar (fromIntegral n / fromIntegral (max 1 total))
+                        Gtk.progressBarSetText bar (Just (Text.pack ("Frame " <> show n <> " of " <> show total)))
+                    run = do
+                        tracks <- fmap catMaybes . forM [t | t <- o.view.soundtrack, not t.muted] $ \t ->
+                            fmap (\path -> Track path t.offset t.volume) <$> b.picture t.asset
+                        exportFilm (ffmpegPath frames) env tracks e out progress (readIORef stopping)
+                background run $ \r -> do
+                    Gtk.widgetDestroy d
+                    case r of
+                        Right () -> say ("Exported to " <> Text.pack out)
+                        Left "stopped" -> say "Export stopped"
+                        Left why -> say ("Not exported: " <> why)
+    _ <- on exportBtn #clicked $ do
+        s <- readIORef st
+        forM_ s.open $ \o -> do
+            chosen <- exportDialog win o.view
+            forM_ chosen $ \e -> do
+                out <- saveAs win o.view.title e.format
+                forM_ out (exportTo e)
     -- The reference board: add, follow or play, take a colour, trace, remove; zoom and pan.
     lastStills <- newIORef (Map.empty :: Map.Map Text C.Surface)
     let
@@ -1596,7 +1644,7 @@ buildWindow = do
         clickNamed n = case n of
             "Follow" -> Gtk.buttonClicked followB
             _ -> forM_ (lookup n buttons) Gtk.buttonClicked
-    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat}
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
@@ -2079,6 +2127,89 @@ connectDialog parent current = do
     r <- ask
     Gtk.widgetDestroy d
     pure r
+
+-- | What to export: size, format, quality, fit, and a transparent background where kept.
+exportDialog :: Gtk.Window -> ProjectView -> IO (Maybe Export)
+exportDialog parent v = do
+    d <- new Gtk.Dialog [#title := "Export", #modal := True]
+    Gtk.windowSetTransientFor d (Just parent)
+    area <- Gtk.dialogGetContentArea d
+    grid <- new Gtk.Grid [#rowSpacing := 10, #columnSpacing := 12, #margin := 18]
+    let
+        sizes = presets v.width v.height
+        formats = [minBound .. maxBound] :: [Format]
+        qualities = [(Standard, "Standard (YouTube's rate)"), (High, "High (1.5×)"), (Max, "Max (2.5×)")]
+    sizeC <- Gtk.comboBoxTextNew
+    forM_ sizes $ \z -> Gtk.comboBoxTextAppendText sizeC z.sizeName
+    Gtk.comboBoxSetActive sizeC 0
+    formatC <- Gtk.comboBoxTextNew
+    forM_ formats $ \f -> Gtk.comboBoxTextAppendText formatC (formatName f)
+    Gtk.comboBoxSetActive formatC 0
+    qualityC <- Gtk.comboBoxTextNew
+    forM_ qualities $ \(_, n) -> Gtk.comboBoxTextAppendText qualityC n
+    Gtk.comboBoxSetActive qualityC 1
+    fitC <- Gtk.comboBoxTextNew
+    Gtk.comboBoxTextAppendText fitC "Fit inside (letterbox)"
+    Gtk.comboBoxTextAppendText fitC "Fill (crop)"
+    Gtk.comboBoxSetActive fitC 0
+    clearB <- Gtk.checkButtonNewWithLabel "Transparent background"
+    note <- Gtk.labelNew (Just (Text.pack (show (duration v) <> " frames at " <> show v.rate <> " fps, through the camera; reference layers are left out.")))
+    addClass note "dim"
+    Gtk.labelSetXalign note 0
+    Gtk.labelSetLineWrap note True
+    forM_ (zip [0 ..] [("Size", toW sizeC), ("Format", toW formatC), ("Quality", toW qualityC), ("Shape", toW fitC)]) $ \(row, (lbl, mk)) -> do
+        l <- Gtk.labelNew (Just lbl)
+        Gtk.labelSetXalign l 1
+        w <- mk
+        Gtk.widgetSetHexpand w True
+        Gtk.gridAttach grid l 0 row 1 1
+        Gtk.gridAttach grid w 1 row 1 1
+    Gtk.gridAttach grid clearB 1 4 1 1
+    Gtk.gridAttach grid note 0 5 2 1
+    Gtk.containerAdd area grid
+    let
+        pick :: [a] -> Gtk.ComboBoxText -> IO (Maybe a)
+        pick xs c = Gtk.comboBoxGetActive c >>= \i -> pure (lookup (fromIntegral i) (zip [0 :: Int ..] xs))
+        sync = do
+            f <- fromMaybe H264 <$> pick formats formatC
+            Gtk.widgetSetSensitive clearB (keepsAlpha f)
+            Gtk.widgetSetSensitive qualityC (f `elem` [H264, Hevc])
+    _ <- on formatC #changed sync
+    sync
+    _ <- on sizeC #changed $ do
+        -- A different shape than the canvas: fitting matters.
+        z <- pick sizes sizeC
+        Gtk.widgetSetSensitive fitC (maybe False (\x -> x.width * v.height /= x.height * v.width) z)
+    Gtk.widgetSetSensitive fitC False
+    Gtk.widgetShowAll d
+    okd <- dialogRun d
+    r <-
+        if not okd
+            then pure Nothing
+            else do
+                z <- pick sizes sizeC
+                f <- pick formats formatC
+                q <- pick (map fst qualities) qualityC
+                fitI <- Gtk.comboBoxGetActive fitC
+                clear <- Gtk.toggleButtonGetActive clearB
+                pure $ (\z' f' q' -> Export {format = f', size = z', quality = q', fit = if fitI == 1 then Cover else Contain, transparent = clear}) <$> z <*> f <*> q
+    Gtk.widgetDestroy d
+    pure r
+
+-- | Where the film goes: a file named after the project (a folder for PNG frames).
+saveAs :: Gtk.Window -> Text -> Format -> IO (Maybe FilePath)
+saveAs parent title f = do
+    let
+        folder = f == PngFrames
+    d <- new Gtk.FileChooserDialog [#title := (if folder then "Export the frames into" else "Export as"), #action := (if folder then Gtk.FileChooserActionSelectFolder else Gtk.FileChooserActionSave), #modal := True, #doOverwriteConfirmation := True]
+    Gtk.windowSetTransientFor d (Just parent)
+    _ <- Gtk.dialogAddButton d "Cancel" (fromIntegral (fromEnum Gtk.ResponseTypeCancel))
+    _ <- Gtk.dialogAddButton d "Export" (fromIntegral (fromEnum Gtk.ResponseTypeAccept))
+    unless folder $ Gtk.fileChooserSetCurrentName d (Text.filter (`notElem` ("/\\:" :: String)) title <> "." <> formatExtension f)
+    answer <- Gtk.dialogRun d
+    path <- if answer == fromIntegral (fromEnum Gtk.ResponseTypeAccept) then Gtk.fileChooserGetFilename d else pure Nothing
+    Gtk.widgetDestroy d
+    pure path
 
 -- | Asks for a picture or video file to put on the board.
 chooseFile :: Gtk.Window -> IO (Maybe FilePath)
