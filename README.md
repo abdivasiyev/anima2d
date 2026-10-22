@@ -123,6 +123,12 @@ duplicates and holds drawings and layers, with undo and onion skin; and it updat
 when another device or an agent saves. The sidebar holds the reference board (videos
 need ffmpeg on the PATH) and the assistant.
 
+A layer's panel (double-click its name in the timeline) sets its name, opacity, blend,
+clipping, depth, drop shadow, rim light and, for a light, the light; the camera tool (C)
+frames the shot on the paper and keys its zoom, turn, shake, depth of field and tint at
+the playhead. Export renders the film at the browser's presets as MP4 (H.264 or HEVC),
+ProRes 4444 with transparency, GIF or PNG frames, with the audio mixed in (ffmpeg).
+
 The assistant is a chat with a model of your choosing that draws and animates in the open
 project with the same tools agents get over MCP, plus a look at the frame it drew. Connect
 it with the gear: Anthropic (an API key; it uses Claude Opus 5.5), or any server that

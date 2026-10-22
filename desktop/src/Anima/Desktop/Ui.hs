@@ -17,6 +17,7 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (forM, forM_, unless, void, when, zipWithM_)
+import Data.Bifunctor (bimap)
 import Data.Char (toLower)
 import Data.GI.Base (AttrOp (..), get, new, on)
 import Data.GI.Base.ManagedPtr (castTo)
@@ -51,7 +52,7 @@ import Anima.Desktop.Draw (Pictures, drawCel, drawItem, drawItems)
 import Anima.Desktop.Export (Export (..), Fit (..), Format (..), Quality (..), Size (..), Track (..), exportFilm, formatExtension, formatName, keepsAlpha, presets)
 import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
-import Anima.Desktop.Scene (Env (..), celAt, drawFrame, drawLayers, duration, newCache, placement, renderPng)
+import Anima.Desktop.Scene (Camera (..), Env (..), cameraAt, celAt, drawFrame, drawLayers, duration, newCache, placement, renderPng)
 import Anima.Desktop.Secrets (ApiKey, keyText, loadKey, parseApiKey, saveKey)
 import Anima.Desktop.Style (accent, applyStyle, dimText, ground, hairline, iconImage, rgb, rgba, rounded, surface, textColour, uiText, workspace)
 import Anima.Desktop.Video (ffmpegPath, frameAt, lengthOf, newFrames)
@@ -70,7 +71,7 @@ data Open = Open
     , env :: Env
     }
 
-data Tool = SelectTool | BrushTool | ScatterTool | EraserTool | ShapeTool | FillTool | TextTool
+data Tool = SelectTool | BrushTool | ScatterTool | EraserTool | ShapeTool | FillTool | TextTool | CameraTool
     deriving stock (Eq, Show)
 
 data SelMode = Moving | Scaling | Turning
@@ -91,6 +92,12 @@ data Board = Board
     , shown :: [(Text, Media, Bool)]
     , panFrom :: Maybe (Double, Double, Double, Double)
     }
+
+-- | A camera key being edited: the key's settings under names of their own.
+data Shot = Shot {atFrame :: Int, shotCentre :: (Double, Double), shotZoom :: Double, shotTurn :: Double, shotEase :: Ease, shotShake :: Double, shotFocus :: Double, shotBlur :: Double, shotTint :: Maybe Text, shotTintAmount :: Double}
+
+shotOf :: CameraKeyView -> Shot
+shotOf k = Shot k.frame k.center k.zoom k.rotation k.ease k.shake k.focus k.aperture k.tint k.tintAmount
 
 {- | The assistant's conversation: the model, what was said (in its wire form), whether a
 turn is running, and the lines on screen (who, what) for tests.
@@ -125,6 +132,8 @@ data State = State
     , draft :: Maybe Draft
     , selection :: [Int]
     , selDrag :: Maybe SelDrag
+    , camDrag :: Maybe ((Double, Double), (Double, Double))
+    -- ^ The shot being dragged: where the pointer started and the shot's centre then.
     , past :: [Project]
     , future :: [Project]
     , dirty :: Bool
@@ -164,6 +173,7 @@ initial =
         , draft = Nothing
         , selection = []
         , selDrag = Nothing
+        , camDrag = Nothing
         , past = []
         , future = []
         , dirty = False
@@ -231,6 +241,8 @@ data Window = Window
     -- ^ A message to the assistant, as Send does.
     , exportFile :: Export -> FilePath -> IO ()
     -- ^ The film to a file, as Export does after its dialogs.
+    , setShotWith :: Text -> Double -> IO ()
+    -- ^ One of the camera bar's sliders set as a person would (zoom, turn, shake).
     , openLayerPanel :: Int -> IO ()
     , setInPanel :: Text -> Aeson.Value -> IO ()
     {- ^ One of the layer panel's controls set as a person would (name, opacity, depth,
@@ -291,6 +303,7 @@ buildWindow = do
     videoFiles <- newIORef (Map.empty :: Map.Map Text (Maybe FilePath))
     boardRef <- newIORef Board {showing = 0, views = Map.empty, picking = False, own = Map.empty, ownPlay = Nothing, shown = [], panFrom = Nothing}
     boardSyncing <- newIORef False
+    camSyncing <- newIORef False
     win <- new Gtk.Window [#title := "anima2D", #defaultWidth := 1360, #defaultHeight := 880]
     -- The title bar: back to the projects, undo and redo, whether it is saved; the
     -- connection, a new project (on the list) and the sidebar.
@@ -346,10 +359,11 @@ buildWindow = do
     shapeR <- toolButton (Just selectR) "shapes" "Shapes (U)"
     fillR <- toolButton (Just selectR) "fill" "Fill (K)"
     textR <- toolButton (Just selectR) "text" "Text (T)"
+    cameraR <- toolButton (Just selectR) "camera" "Camera (C)"
     Gtk.toggleButtonSetActive brushR True
     rail <- Gtk.boxNew Gtk.OrientationVertical 2
     addClass rail "rail"
-    pack rail [toW selectR, toW brushR, toW scatterR, toW eraserR, toW shapeR, toW fillR, toW textR]
+    pack rail [toW selectR, toW brushR, toW scatterR, toW eraserR, toW shapeR, toW fillR, toW textR, toW cameraR]
     toolName <- Gtk.labelNew (Just "Brush")
     addClass toolName "dim"
     Gtk.widgetSetSizeRequest toolName 64 (-1)
@@ -388,12 +402,35 @@ buildWindow = do
     sizeL <- Gtk.labelNew (Just "Size")
     alphaL <- Gtk.labelNew (Just "Opacity")
     forM_ [sizeL, alphaL] (`addClass` "dim")
+    -- The camera's bar: the shot at this frame, each change its key here.
+    camKeyL <- Gtk.labelNew (Just "")
+    addClass camKeyL "dim"
+    camZoom <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0.1 10 0.01
+    camTurn <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal (-180) 180 1
+    camShake <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 60 1
+    camAperture <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 20 0.5
+    camFocus <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0.2 20 0.1
+    camTintB <- Gtk.checkButtonNewWithLabel "Tint"
+    camTintC <- Gtk.colorButtonNew
+    camTintA <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 1 0.01
+    camEase <- Gtk.comboBoxTextNew
+    forM_ [("inOut", "Ease in and out"), ("in", "Ease in"), ("out", "Ease out"), ("linear", "Linear")] $ \(i, n) -> Gtk.comboBoxTextAppend camEase (Just i) n
+    camRemove <- iconButton "remove" "Remove the key at this frame"
+    forM_ [(camZoom, 2, 90), (camTurn, 0, 80), (camShake, 0, 70), (camAperture, 1, 70), (camFocus, 1, 70), (camTintA, 2, 60)] $ \(sc, d, w) -> do
+        Gtk.scaleSetValuePos sc Gtk.PositionTypeRight
+        Gtk.scaleSetDigits sc d
+        Gtk.widgetSetSizeRequest sc w (-1)
+    camBar <- Gtk.boxNew Gtk.OrientationHorizontal 6
+    camLabels <- forM ["Zoom", "Turn", "Shake", "Blur", "Focus"] $ \t -> Gtk.labelNew (Just t) >>= \l -> addClass l "dim" >> pure l
+    case camLabels of
+        [lz, lt, ls, lb, lf] -> pack camBar [toW camKeyL, toW lz, toW camZoom, toW lt, toW camTurn, toW ls, toW camShake, toW lb, toW camAperture, toW lf, toW camFocus, toW camTintB, toW camTintC, toW camTintA, toW camEase, toW camRemove]
+        _ -> pure ()
     tools <- Gtk.boxNew Gtk.OrientationHorizontal 8
     addClass tools "bar"
-    pack tools [toW toolName, toW brushKinds, toW scatterKinds, toW eraserKinds, toW shapeKinds, toW filledB]
+    pack tools [toW toolName, toW brushKinds, toW scatterKinds, toW eraserKinds, toW shapeKinds, toW filledB, toW camBar]
     toolsEnd <- sequence [toW colourB, separator, toW sizeL, toW sizeS, toW alphaL, toW alphaS]
     forM_ (reverse toolsEnd) $ \w -> Gtk.boxPackEnd tools w False False 0
-    options <- sequence [toW brushKinds, toW scatterKinds, toW eraserKinds, toW shapeKinds, toW filledB]
+    options <- sequence [toW brushKinds, toW scatterKinds, toW eraserKinds, toW shapeKinds, toW filledB, toW camBar]
     let
         showOptions t = do
             Gtk.labelSetText toolName $ case t of
@@ -404,12 +441,16 @@ buildWindow = do
                 ShapeTool -> "Shapes"
                 FillTool -> "Fill"
                 TextTool -> "Text"
+                CameraTool -> "Camera"
             zipWithM_ Gtk.widgetSetVisible options $ case t of
-                BrushTool -> [True, False, False, False, False]
-                ScatterTool -> [False, True, False, False, False]
-                EraserTool -> [False, False, True, False, False]
-                ShapeTool -> [False, False, False, True, True]
-                _ -> [False, False, False, False, False]
+                BrushTool -> [True, False, False, False, False, False]
+                ScatterTool -> [False, True, False, False, False, False]
+                EraserTool -> [False, False, True, False, False, False]
+                ShapeTool -> [False, False, False, True, True, False]
+                CameraTool -> [False, False, False, False, False, True]
+                _ -> [False, False, False, False, False, False]
+            -- The pen's colour and size mean nothing to the camera.
+            mapM_ (`Gtk.widgetSetVisible` (t /= CameraTool)) toolsEnd
     -- Editor: the bar over the rail and canvas, over the transport and the timeline; the
     -- sidebar on the right.
     canvas <- new Gtk.DrawingArea [#canFocus := True]
@@ -816,6 +857,7 @@ buildWindow = do
             forM_ s.open $ \o -> do
                 writeIORef st s {playhead = (s.playhead + d) `mod` max 1 (duration o.view)}
                 redraw
+                when (s.tool == CameraTool) refreshCamera
         play = do
             s <- readIORef st
             case (s.playing, s.open) of
@@ -854,6 +896,51 @@ buildWindow = do
                             scheduleSave
                             redraw
                 _ -> commit f >> modifyIORef' st (\x -> x {lastKey = Just k})
+        -- The camera at the playhead, as a key: the one there, or where the camera is between
+        -- keys, or the whole canvas when there is no camera yet.
+        shotHere = do
+            s <- readIORef st
+            pure $ case s.open of
+                Nothing -> Nothing
+                Just o ->
+                    let
+                        v = o.view
+                        keyed = [shotOf k | k <- v.shots, k.frame == s.playhead]
+                        made = case cameraAt v s.playhead of
+                            Just c -> Shot s.playhead (c.cx, c.cy) c.zoom c.rotation EaseInOut c.shake c.focus c.aperture (fmap rgbHex c.tint) c.tintAmount
+                            Nothing -> Shot s.playhead (fromIntegral v.width / 2, fromIntegral v.height / 2) 1 0 EaseInOut 0 1 0 Nothing 0
+                    in
+                        Just (case keyed of k : _ -> (True, k); [] -> (False, made))
+        -- The key at the playhead changed by `f` (added if there was none), as one edit.
+        setShot what f = do
+            s <- readIORef st
+            here <- shotHere
+            syncing <- readIORef camSyncing
+            forM_ ((,) <$> s.open <*> here) $ \(o, (_, k)) -> unless syncing $ do
+                let
+                    k' = f k
+                    keys = [shotOf x | x <- o.view.shots, x.frame /= s.playhead] <> [k']
+                    ordered = foldr insertByFrame [] keys
+                    insertByFrame x [] = [x]
+                    insertByFrame x (y : ys) = if x.atFrame <= y.atFrame then x : y : ys else y : insertByFrame x ys
+                commitKeyed ("camera-" <> what <> Text.pack (show s.playhead)) (setCamera (Aeson.toJSON (map shotValue ordered)))
+                refreshCamera
+        refreshCamera = do
+            here <- shotHere
+            forM_ here $ \(keyed, k) -> do
+                writeIORef camSyncing True
+                Gtk.labelSetText camKeyL (if keyed then "Key at this frame" else "No key here: a change adds one")
+                Gtk.rangeSetValue camZoom k.shotZoom
+                Gtk.rangeSetValue camTurn (k.shotTurn * 180 / pi)
+                Gtk.rangeSetValue camShake k.shotShake
+                Gtk.rangeSetValue camAperture k.shotBlur
+                Gtk.rangeSetValue camFocus k.shotFocus
+                Gtk.toggleButtonSetActive camTintB (isJust k.shotTint)
+                setColour camTintC (fromMaybe "#ff9a5c" k.shotTint)
+                Gtk.rangeSetValue camTintA k.shotTintAmount
+                _ <- Gtk.comboBoxSetActiveId camEase (Just (easeId k.shotEase))
+                Gtk.widgetSetSensitive camRemove keyed
+                writeIORef camSyncing False
         -- The object eraser: the topmost item under the pen on the edited drawing goes.
         eraseAt (lx, ly) s = case s.open >>= \o -> lookup s.layer (zip [0 ..] o.view.stack) of
             Just LayerView {kind = DrawingView holdLast cels}
@@ -919,6 +1006,7 @@ buildWindow = do
     _ <- on eraserR #toggled (pick EraserTool)
     _ <- on shapeR #toggled (pick ShapeTool)
     _ <- on textR #toggled (pick TextTool)
+    _ <- on cameraR #toggled (pick CameraTool >> refreshCamera)
     _ <- on filledB #toggled (Gtk.toggleButtonGetActive filledB >>= \f -> modifyIORef' st (\s -> s {filled = f}))
     _ <- on colourB #colorSet (getColour colourB >>= \c -> modifyIORef' st (\s -> s {colour = c}))
     _ <- on sizeS #valueChanged (Gtk.rangeGetValue sizeS >>= \v -> modifyIORef' st (\s -> s {penSize = v}))
@@ -1415,6 +1503,10 @@ buildWindow = do
                         stop
                         t <- target
                         case (t, s.tool) of
+                            (_, CameraTool) -> do
+                                here <- shotHere
+                                forM_ here $ \(_, k) -> writeIORef st s {camDrag = Just (canvasPoint s (x, y), k.shotCentre)}
+                                pure True
                             (Left why, _) -> say why >> pure True
                             (Right _, TextTool) -> do
                                 body <- askText win "Text" ""
@@ -1464,6 +1556,10 @@ buildWindow = do
                 Move -> do
                     case (s.drag, s.draft) of
                         (Just (x0, y0, px, py), _) -> writeIORef st s {panX = px + x - x0, panY = py + y - y0} >> Gtk.widgetQueueDraw canvas
+                        _ | Just (p0, c0) <- s.camDrag -> do
+                            let
+                                (px, py) = canvasPoint s (x, y)
+                            setShot "move" (\k -> k {shotCentre = bimap (+ (px - fst p0)) (+ (py - snd p0)) c0})
                         _ | Just sd <- s.selDrag -> do
                             let
                                 (lx, ly) = toLayer s (x, y)
@@ -1495,7 +1591,8 @@ buildWindow = do
                             when pe.held (eraseAt (toLayer s (x, y)) s)
                     pure True
                 Release -> do
-                    writeIORef st s {drag = Nothing, draft = Nothing, selDrag = Nothing}
+                    writeIORef st s {drag = Nothing, draft = Nothing, selDrag = Nothing, camDrag = Nothing}
+                    when (isJust s.camDrag) (modifyIORef' st (\x' -> x' {lastKey = Nothing}))
                     forM_ s.selDrag $ \sd -> unless (sd.current == M.identity || null s.selection) $ do
                         let
                             M.Matrix a b c d e f = sd.current
@@ -1543,6 +1640,24 @@ buildWindow = do
                 | otherwise -> modifyIORef' st (\s -> s {panX = s.panX - dx * 12, panY = s.panY - dy * 12})
         Gtk.widgetQueueDraw canvas
         pure True
+    -- The camera's bar: each control sets the key at the playhead.
+    _ <- on camZoom #valueChanged (Gtk.rangeGetValue camZoom >>= \z -> setShot "zoom" (\k -> k {shotZoom = z}))
+    _ <- on camTurn #valueChanged (Gtk.rangeGetValue camTurn >>= \a -> setShot "turn" (\k -> k {shotTurn = a * pi / 180}))
+    _ <- on camShake #valueChanged (Gtk.rangeGetValue camShake >>= \x -> setShot "shake" (\k -> k {shotShake = x}))
+    _ <- on camAperture #valueChanged (Gtk.rangeGetValue camAperture >>= \x -> setShot "aperture" (\k -> k {shotBlur = x}))
+    _ <- on camFocus #valueChanged (Gtk.rangeGetValue camFocus >>= \x -> setShot "focus" (\k -> k {shotFocus = x}))
+    _ <- on camTintA #valueChanged (Gtk.rangeGetValue camTintA >>= \x -> setShot "tintAmount" (\k -> k {shotTintAmount = x}))
+    _ <- on camTintB #toggled $ do
+        on' <- Gtk.toggleButtonGetActive camTintB
+        c <- getColour camTintC
+        setShot "tint" (\k -> k {shotTint = if on' then Just c else Nothing, shotTintAmount = if on' && k.shotTintAmount == 0 then 0.25 else k.shotTintAmount})
+    _ <- on camTintC #colorSet (getColour camTintC >>= \c -> setShot "tint" (\k -> k {shotTint = Just c}))
+    _ <- on camEase #changed (Gtk.comboBoxGetActiveId camEase >>= \e -> setShot "ease" (\k -> k {shotEase = easeFromId e}))
+    _ <- on camRemove #clicked $ do
+        s <- readIORef st
+        forM_ s.open $ \o -> do
+            commit (setCamera (Aeson.toJSON [shotValue (shotOf k) | k <- o.view.shots, k.frame /= s.playhead]))
+            refreshCamera
     -- The layer panel: a layer's name, opacity, blend, clipping, depth, effects and, for a
     -- light, its light; and its place in the stack. Opened from the timeline's layer names.
     panelLayer <- newIORef (0 :: Int)
@@ -1669,6 +1784,11 @@ buildWindow = do
                 Gtk.popoverPopup panel
                 modifyIORef' st (\x -> x {layer = li})
                 redraw
+        shotSet k x = case k of
+            "zoom" -> Gtk.rangeSetValue camZoom x
+            "turn" -> Gtk.rangeSetValue camTurn x
+            "shake" -> Gtk.rangeSetValue camShake x
+            _ -> pure ()
         -- A control set from code, as a person would set it (for the UI test).
         panelSet key val = case (key, val) of
             ("name", Aeson.String t) -> Gtk.entrySetText pName t >> Gtk.widgetActivate pName >> pure ()
@@ -1767,6 +1887,7 @@ buildWindow = do
                         (False, "e") -> Gtk.toggleButtonSetActive eraserR True >> pure True
                         (False, "u") -> Gtk.toggleButtonSetActive shapeR True >> pure True
                         (False, "t") -> Gtk.toggleButtonSetActive textR True >> pure True
+                        (False, "c") -> Gtk.toggleButtonSetActive cameraR True >> pure True
                         (False, "o") -> Gtk.toggleButtonSetActive onionBtn (not s.onion) >> pure True
                         (False, "n") -> Gtk.buttonClicked newCelB >> pure True
                         (False, "d") -> Gtk.buttonClicked dupCelB >> pure True
@@ -1838,7 +1959,7 @@ buildWindow = do
         clickNamed n = case n of
             "Follow" -> Gtk.buttonClicked followB
             _ -> forM_ (lookup n buttons) Gtk.buttonClicked
-    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo, openLayerPanel = openPanel, setInPanel = panelSet}
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo, openLayerPanel = openPanel, setInPanel = panelSet, setShotWith = shotSet}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
@@ -2013,6 +2134,31 @@ drawCanvas s under finishing = do
                         C.paint
                     )
         drawLayers o.env s.playhead [i | (i, l) <- zip [0 ..] v.stack, not (isReference l)] Nothing preview
+        -- The camera tool: the shot as a frame over the paper, the rest dimmed.
+        when (s.tool == CameraTool) $ do
+            let
+                (ccx, ccy, cz, cr) = case cameraAt v s.playhead of
+                    Just c -> (c.cx, c.cy, c.zoom, c.rotation)
+                    Nothing -> (pw / 2, ph / 2, 1, 0)
+                fw = pw / cz
+                fh = ph / cz
+            C.save
+            C.setFillRule C.FillRuleEvenOdd
+            C.rectangle (-(pw * 4)) (-(ph * 4)) (pw * 9) (ph * 9)
+            C.translate ccx ccy
+            C.rotate cr
+            C.rectangle (-(fw / 2)) (-(fh / 2)) fw fh
+            C.setSourceRGBA 0 0 0 0.38
+            C.fill
+            C.rectangle (-(fw / 2)) (-(fh / 2)) fw fh
+            rgb accent
+            C.setLineWidth (2 / s.magnify)
+            C.stroke
+            forM_ [(-1, 0), (1, 0), (0, -1), (0, 1)] $ \(dx, dy) -> do
+                C.moveTo (dx * 4 / s.magnify) (dy * 4 / s.magnify)
+                C.lineTo (dx * 14 / s.magnify) (dy * 14 / s.magnify)
+            C.stroke
+            C.restore
         -- The selection's box, its corner handles (scale) and the round handle above (turn).
         forM_ (here >>= \n -> boxOf (selected n)) $ \bx -> forM_ (lookup s.layer (zip [0 ..] v.stack)) $ \l -> do
             let
@@ -2081,6 +2227,18 @@ drawTimeline s w h = do
         rgba hairline
         C.rectangle 0 (rulerH - 1) w 1
         C.fill
+        -- Camera keys: diamonds on the ruler.
+        forM_ v.shots $ \k -> do
+            let
+                kx = frameX k.frame + unitW / 2
+            when (kx >= headerW && kx <= w) $ do
+                rgb (0xf3 / 255, 0xc8 / 255, 0x43 / 255)
+                C.moveTo kx (rulerH - 10)
+                C.lineTo (kx + 4) (rulerH - 6)
+                C.lineTo kx (rulerH - 2)
+                C.lineTo (kx - 4) (rulerH - 6)
+                C.closePath
+                C.fill
         -- Rows: each drawing a block as wide as it is held.
         forM_ (zip [0 :: Int ..] layers) $ \(row, (li, l)) -> do
             let
@@ -2404,6 +2562,42 @@ saveAs parent title f = do
     path <- if answer == fromIntegral (fromEnum Gtk.ResponseTypeAccept) then Gtk.fileChooserGetFilename d else pure Nothing
     Gtk.widgetDestroy d
     pure path
+
+-- | A camera key as the project's JSON has it.
+shotValue :: Shot -> Aeson.Value
+shotValue k =
+    Aeson.object
+        [ "frame" Aeson..= k.atFrame
+        , "center" Aeson..= [fst k.shotCentre, snd k.shotCentre]
+        , "zoom" Aeson..= max 0.1 (min 10 k.shotZoom)
+        , "rotation" Aeson..= k.shotTurn
+        , "ease" Aeson..= easeId k.shotEase
+        , "shake" Aeson..= k.shotShake
+        , "focus" Aeson..= max 0.2 (min 20 k.shotFocus)
+        , "aperture" Aeson..= k.shotBlur
+        , "tint" Aeson..= k.shotTint
+        , "tintAmount" Aeson..= k.shotTintAmount
+        ]
+
+easeId :: Ease -> Text
+easeId = \case
+    Linear -> "linear"
+    EaseIn -> "in"
+    EaseOut -> "out"
+    EaseInOut -> "inOut"
+
+easeFromId :: Maybe Text -> Ease
+easeFromId = \case
+    Just "linear" -> Linear
+    Just "in" -> EaseIn
+    Just "out" -> EaseOut
+    _ -> EaseInOut
+
+-- | A colour as #rrggbb, from channels 0 to 1.
+rgbHex :: (Double, Double, Double) -> Text
+rgbHex (r, g, b) = Text.pack ('#' : concatMap byte [r, g, b])
+    where
+        byte v = let n = max 0 (min 255 (round (v * 255) :: Int)) in (if n < 16 then "0" else "") <> showHex n ""
 
 blendName :: Blend -> Text
 blendName = Text.toLower . Text.pack . show

@@ -313,6 +313,23 @@ main = do
     p1 <- state
     check "the panel renames and restyles the layer" (fmap (\l -> (l.name, l.opacity, l.mixing, l.distance, isJust l.shadow)) (layerOf p1) == Just ("Sky", 0.4, Multiply, 3, True)) (show (fmap (\l -> (l.name, l.opacity, l.mixing, l.distance)) (layerOf p1)))
     check "a slider's drag is one undo step" (p1.undoSteps - p0.undoSteps == 5) (show (p1.undoSteps - p0.undoSteps))
+    -- The camera: a slider keys the shot at this frame; dragging moves it, one undo step.
+    keyed "c"
+    w.setShotWith "zoom" 2 >> pump 30
+    k1 <- state
+    let
+        keysOf p = maybe [] (\pr -> (viewProject pr).shots) p.edited
+    check "a camera slider keys this frame" (map (\k -> (k.frame, k.zoom)) (keysOf k1) == [(k1.atFrame, 2)]) (show (map (\k -> (k.frame, k.zoom)) (keysOf k1), k1.atFrame))
+    before <- state
+    drag (960, 540) (1160, 640)
+    k2 <- state
+    check "dragging moves the shot, as one undo step" (map (.center) (keysOf k2) == [(1160, 640)] && k2.undoSteps - before.undoSteps == 1) (show (map (.center) (keysOf k2), k2.undoSteps - before.undoSteps))
+    snapshot w.canvasArea ("ui-snapshots" </> "09-camera.png")
+    void (w.key "right" False False) >> pump 20
+    w.setShotWith "zoom" 1.5 >> pump 30
+    k3 <- state
+    check "a change on another frame adds a second key, in order" (map (.frame) (keysOf k3) == [0, 1]) (show (map (.frame) (keysOf k3)))
+    keyed "b"
     -- Export, as the dialogs hand it over: a small MP4 of the project.
     let
         film = dir </> "film.mp4"
