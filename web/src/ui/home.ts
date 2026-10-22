@@ -64,7 +64,7 @@ const importFile = async (file: File): Promise<Result<Project>> => {
   if (text === undefined) return err("the file could not be read");
   const id = parseProjectId(crypto.randomUUID());
   if (!id.ok) return id;
-  return andThen(andThen(decodeJson(text), parseProject), (p) => makeProject(id.value, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts));
+  return andThen(andThen(decodeJson(text), parseProject), (p) => makeProject(id.value, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts, p.references));
 };
 
 const card = (s: ProjectSummary, open: (s: ProjectSummary) => void, remove: (s: ProjectSummary) => void): HTMLElement => {

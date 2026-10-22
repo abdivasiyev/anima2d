@@ -40,7 +40,7 @@ const asCopy = (p: Project): Result<Project> => {
   const name = parseProjectName(`${p.name.slice(0, 70)} (copy)`);
   if (!id.ok) return id;
   if (!name.ok) return name;
-  return makeProject(id.value, name.value, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts);
+  return makeProject(id.value, name.value, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts, p.references);
 };
 
 /** Push a project the server has not got; used for copies and projects made offline. */

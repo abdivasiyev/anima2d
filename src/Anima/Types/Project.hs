@@ -36,6 +36,7 @@ module Anima.Types.Project
     , ShadowView (..)
     , RimView (..)
     , LightView (..)
+    , BoardView (..)
     , CameraKeyView (..)
     , viewProject
     , viewItem
@@ -85,6 +86,11 @@ module Anima.Types.Project
     , setHoldAt
     , removeLayerAt
     , addLightLayer
+    , addReference
+    , removeReferenceAt
+    , setReferenceFollow
+    , traceReference
+    , maxReferences
     , pickAnyLayer
     , setCamera
     , restyleLayer
@@ -1277,9 +1283,49 @@ data Project = Project
     -- ^ The project's colours, to pick from and to recolour everything by.
     , fonts :: [ProjectFont]
     -- ^ Font files the project brings, by the family its text items name.
+    , references :: [Reference]
+    {- ^ The reference board: pictures and videos to look at while drawing, never drawn
+    into the film.
+    -}
     }
     deriving stock (Eq, Show)
     deriving (FromJSON, ToJSON) via Parsed Project
+
+maxReferences :: Int
+maxReferences = 24
+
+{- | A picture or video on the reference board. A video that follows shows the moment the
+playhead is at (for timing to it); one that does not plays on its own.
+-}
+data Reference = Reference {refAsset :: AssetId, refMedia :: Media, refName :: Label, follow :: Bool}
+    deriving stock (Eq, Show)
+
+referenceFrom :: Value -> Either Text Reference
+referenceFrom =
+    asObject >=> \o ->
+        Reference
+            <$> field "asset" assetIdFrom o
+            <*> field "media" (oneOf mediaName "expected media of \"image\" or \"video\"") o
+            <*> field "name" labelFrom o
+            <*> field "follow" followFrom o
+    where
+        followFrom = \case
+            Null -> Right True
+            Bool b -> Right b
+            _ -> Left "expected true or false"
+
+referencesFrom :: Value -> Either Text [Reference]
+referencesFrom = \case
+    Null -> Right []
+    v -> (asArray >=> bounded "references" 0 maxReferences >=> indexed referenceFrom) v
+
+referenceValue :: Reference -> Value
+referenceValue r =
+    let
+        AssetId a = r.refAsset
+        Label n = r.refName
+    in
+        object ["asset" .= a, "media" .= mediaName r.refMedia, "name" .= n, "follow" .= r.follow]
 
 data ProjectFont = ProjectFont {family :: Text, fontAsset :: AssetId}
     deriving stock (Eq, Show)
@@ -1348,14 +1394,15 @@ instance Parse Project where
             if version < 3
                 then do
                     cels <- field "frames" (celsFrom "frames" (if version == 1 then celOldFrom "strokes" strokeV1From else celOldFrom "items" parse)) o
-                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = [], palette = [], fonts = []}
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer cels), camera = [], audio = [], palette = [], fonts = [], references = []}
                 else do
                     ls <- field "layers" (asArray >=> bounded "layers" 1 maxLayers >=> indexed layerFrom >=> nonEmpty ("expected 1 to " <> tshow maxLayers <> " layers")) o
                     cam <- field "camera" (asArray >=> bounded "keys" 0 maxCameraKeys >=> indexed cameraKeyFrom) o
                     au <- field "audio" (asArray >=> bounded "tracks" 0 maxAudioTracks >=> indexed audioTrackFrom) o
                     pal <- field "palette" paletteFrom o
                     fs <- field "fonts" fontsFrom o
-                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au, palette = pal, fonts = fs}
+                    refs <- field "references" referencesFrom o
+                    checked Project {id = pid, name = pname, canvas = c, fps = f, layers = ls, camera = cam, audio = au, palette = pal, fonts = fs, references = refs}
     unparse p =
         object
             $ [ "format" .= (3 :: Int)
@@ -1369,6 +1416,7 @@ instance Parse Project where
               ]
                 <> ["palette" .= map colorValue p.palette | not (null p.palette)]
                 <> ["fonts" .= map fontValue p.fonts | not (null p.fonts)]
+                <> ["references" .= map referenceValue p.references | not (null p.references)]
 
 -- | The timeline's length: its longest drawing layer.
 duration :: Project -> Int
@@ -1407,7 +1455,7 @@ restyleLayer li o p = do
 
 -- | A new project with one drawing layer and one empty drawing.
 newProject :: ProjectId -> ProjectName -> Canvas -> Fps -> Project
-newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = [], palette = [], fonts = []}
+newProject pid pname c f = Project {id = pid, name = pname, canvas = c, fps = f, layers = NonEmpty.singleton (firstLayer (NonEmpty.singleton (Cel (Hold 1) NoMark [] Nothing))), camera = [], audio = [], palette = [], fonts = [], references = []}
 
 {- | The layer an agent means: by id, or (none given) the topmost drawing layer. Returned
 as its index, bottom first.
@@ -1457,6 +1505,52 @@ addLightLayer raw v p = do
         layer = LightLayer (plainLook (LayerId fresh) lbl) {blend = Add} li
     layers' <- nonEmpty "expected a layer" (NonEmpty.toList p.layers <> [layer])
     checked p {layers = layers'}
+
+-- | A picture or video put on the reference board, from its wire object.
+addReference :: Value -> Project -> Either Text Project
+addReference v p = do
+    r <- at "reference" (referenceFrom v)
+    if length p.references >= maxReferences
+        then Left ("references: expected 0 to " <> tshow maxReferences <> " references")
+        else checked p {references = p.references <> [r]}
+
+-- | Reference `i` (from 0) off the board.
+removeReferenceAt :: Int -> Project -> Either Text Project
+removeReferenceAt i p
+    | i < 0 || i >= length p.references = Left "expected a reference that exists"
+    | otherwise = checked p {references = take i p.references <> drop (i + 1) p.references}
+
+-- | Whether video reference `i` follows the playhead or plays on its own.
+setReferenceFollow :: Int -> Bool -> Project -> Either Text Project
+setReferenceFollow i f p = case splitAt i p.references of
+    (before, r : after) | i >= 0 -> checked p {references = before <> [r {follow = f}] <> after}
+    _ -> Left "expected a reference that exists"
+
+{- | Reference `i` on the canvas, to trace: a locked layer at half strength under the
+drawings, which the film leaves out.
+-}
+traceReference :: Int -> Project -> Either Text Project
+traceReference i p = case drop i p.references of
+    r : _ | i >= 0 -> do
+        let
+            ids =
+                [ t
+                | l <- NonEmpty.toList p.layers
+                , let
+                    LayerId t = (lookOf l).layerId
+                ]
+            fresh = case [ c
+                         | n <- [1 :: Int ..]
+                         , let
+                            c = "reference-" <> tshow n
+                         , c `notElem` ids
+                         ] of
+                c : _ -> c
+                [] -> "reference-new"
+            layer = ReferenceLayer (LayerLook (LayerId fresh) r.refName True True (Opacity 0.5) Normal False Nothing 1 Nothing) r.refAsset r.refMedia
+        layers' <- nonEmpty "expected a layer" (layer : NonEmpty.toList p.layers)
+        checked p {layers = layers'}
+    _ -> Left "expected a reference that exists"
 
 -- | The camera's keys replaced (an empty list for none), parsed as in a project.
 setCamera :: Value -> Project -> Either Text Project
@@ -1855,7 +1949,12 @@ data ProjectView = ProjectView
     , shots :: [CameraKeyView]
     , colours :: [Text]
     , fontFiles :: [(Text, Text)]
+    , board :: [BoardView]
     }
+    deriving stock (Eq, Show)
+
+-- | A picture or video on the reference board: its asset, kind, name and whether it follows.
+data BoardView = BoardView {asset :: Text, media :: Media, name :: Text, follows :: Bool}
     deriving stock (Eq, Show)
 
 viewProject :: Project -> ProjectView
@@ -1870,6 +1969,7 @@ viewProject p =
         , shots = map viewCamera p.camera
         , colours = map colorText p.palette
         , fontFiles = [(f.family, let AssetId a = f.fontAsset in a) | f <- p.fonts]
+        , board = [BoardView {asset = let AssetId a = r.refAsset in a, media = r.refMedia, name = let Label n = r.refName in n, follows = r.follow} | r <- p.references]
         }
     where
         Canvas (Width w) (Height h) = p.canvas

@@ -1133,9 +1133,37 @@ export type Project = Brand<
     readonly palette: readonly Color[];
     /** Font files the project brings. */
     readonly fonts: readonly ProjectFont[];
+    /** The reference board: pictures and videos to look at while drawing, never drawn into the film. */
+    readonly references: readonly Reference[];
   },
   "Project"
 >;
+
+export const MAX_REFERENCES = 24;
+
+/**
+ * A picture or video on the reference board. A video that follows shows the moment the
+ * playhead is at (for timing to it); one that does not plays on its own.
+ */
+export type Reference = Brand<{ readonly asset: AssetId; readonly media: Media; readonly name: LabelName; readonly follow: boolean }, "Reference">;
+
+export const makeReference = (asset: AssetId, media: Media, name: LabelName, follow: boolean): Reference => brandChecked({ asset, media, name, follow });
+
+const parseFollow = (raw: unknown): Result<boolean> =>
+  raw === undefined || raw === null ? ok(true) : typeof raw === "boolean" ? ok(raw) : err("expected true or false");
+
+export const parseReference = (raw: unknown): Result<Reference> =>
+  parseWith(function* () {
+    const o = yield* bind(object(raw));
+    const asset = yield* field(o, "asset", parseAssetId);
+    const media = yield* field(o, "media", parseMedia);
+    const name = yield* field(o, "name", parseLabel);
+    const follow = yield* field(o, "follow", parseFollow);
+    return ok(makeReference(asset, media, name, follow));
+  });
+
+const parseReferences = (raw: unknown): Result<Reference[]> =>
+  raw === undefined || raw === null ? ok([]) : andThen(andThen(array(raw), (xs) => bounded("references", 0, MAX_REFERENCES, xs)), (xs) => each(xs, parseReference));
 
 export const MAX_FONTS = 32;
 
@@ -1174,6 +1202,7 @@ export const makeProject = (
   audio: readonly AudioTrack[] = [],
   palette: readonly Color[] = [],
   fonts: readonly ProjectFont[] = [],
+  references: readonly Reference[] = [],
 ): Result<Project> => {
   const ne = nonEmpty(layers);
   if (ne === undefined || layers.length > MAX_LAYERS) return err(`layers: expected 1 to ${MAX_LAYERS} layers`);
@@ -1185,7 +1214,8 @@ export const makeProject = (
   if (new Set(audio.map((a) => a.id)).size !== audio.length) return err("audio: expected every track id to be different");
   if (palette.length > MAX_PALETTE) return err(`palette: expected 0 to ${MAX_PALETTE} colours`);
   if (new Set(fonts.map((f) => f.family)).size !== fonts.length) return err("fonts: expected every font family to be different");
-  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio, palette, fonts }));
+  if (references.length > MAX_REFERENCES) return err(`references: expected 0 to ${MAX_REFERENCES} references`);
+  return ok(brandChecked({ id, name, canvas, fps, layers: ne, camera, audio, palette, fonts, references }));
 };
 
 const firstLayer = (cels: NonEmpty<Cel>): Result<Layer> => {
@@ -1216,7 +1246,8 @@ export const parseProject = (raw: unknown): Result<Project> =>
     const audio = yield* field(o, "audio", (v) => andThen(andThen(array(v), (xs) => bounded("tracks", 0, MAX_AUDIO_TRACKS, xs)), (xs) => each(xs, parseAudioTrack)));
     const palette = yield* field(o, "palette", parsePalette);
     const fonts = yield* field(o, "fonts", parseFonts);
-    return makeProject(id, name, canvas, fps, layers, camera, audio, palette, fonts);
+    const references = yield* field(o, "references", parseReferences);
+    return makeProject(id, name, canvas, fps, layers, camera, audio, palette, fonts, references);
   });
 
 /** The wire shape the server parses; always format 3. */
@@ -1231,6 +1262,7 @@ export const unparseProject = (p: Project): unknown => ({
   audio: p.audio.map((a) => ({ id: a.id, asset: a.asset, name: a.name, offset: a.offset, volume: a.volume, muted: a.muted })),
   ...(p.palette.length === 0 ? {} : { palette: [...p.palette] }),
   ...(p.fonts.length === 0 ? {} : { fonts: p.fonts.map((f) => ({ family: f.family, asset: f.asset })) }),
+  ...(p.references.length === 0 ? {} : { references: p.references.map((r) => ({ asset: r.asset, media: r.media, name: r.name, follow: r.follow })) }),
 });
 
 // Time ----------------------------------------------------------------------------------

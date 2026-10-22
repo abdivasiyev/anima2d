@@ -27,6 +27,7 @@ import {
   type Light,
   type MotionKey,
   type ProjectFont,
+  type Reference,
   type Vec,
   type Canvas,
   type Cel,
@@ -57,7 +58,7 @@ export interface Where {
 const ONE: Hold = unwrap(parseHold(1));
 
 const rebuild = (p: Project, layers: readonly Layer[], camera = p.camera, audio = p.audio, palette = p.palette): Result<Project> =>
-  makeProject(p.id, p.name, p.canvas, p.fps, layers, camera, audio, palette, p.fonts);
+  makeProject(p.id, p.name, p.canvas, p.fps, layers, camera, audio, palette, p.fonts, p.references);
 
 const blankCel = (): Cel => unwrap(makeCel(ONE, "none", []));
 
@@ -102,9 +103,9 @@ export const newProject = (id: ProjectId, name: ProjectName, canvas: Canvas, fps
     ),
   );
 
-export const rename = (p: Project, name: ProjectName): Result<Project> => makeProject(p.id, name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts);
+export const rename = (p: Project, name: ProjectName): Result<Project> => makeProject(p.id, name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts, p.references);
 
-export const setFps = (p: Project, fps: Fps): Result<Project> => makeProject(p.id, p.name, p.canvas, fps, p.layers, p.camera, p.audio, p.palette, p.fonts);
+export const setFps = (p: Project, fps: Fps): Result<Project> => makeProject(p.id, p.name, p.canvas, fps, p.layers, p.camera, p.audio, p.palette, p.fonts, p.references);
 
 // Items ---------------------------------------------------------------------------------
 
@@ -350,7 +351,7 @@ const recolorItem = (item: Item, swap: (c: Color) => Color): Result<Item> => {
 
 /** Replace the project's font files. */
 export const setFonts = (p: Project, fonts: readonly ProjectFont[]): Result<Project> =>
-  makeProject(p.id, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, fonts);
+  makeProject(p.id, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, fonts, p.references);
 
 export const setPalette = (p: Project, palette: readonly Color[]): Result<Project> => rebuild(p, p.layers, p.camera, p.audio, palette);
 
@@ -398,3 +399,7 @@ export const typewriter = (p: Project, at: Where, item: number, by: "letter" | "
       return first === undefined ? err("expected a drawing") : andThen(makeLayer({ ...l, cels: [first, ...rest] }), (layer) => rebuild(p, p.layers.map((x, j) => (j === at.layer ? layer : x))));
     });
   });
+
+/** The reference board replaced. */
+export const setReferences = (p: Project, references: readonly Reference[]): Result<Project> =>
+  makeProject(p.id, p.name, p.canvas, p.fps, p.layers, p.camera, p.audio, p.palette, p.fonts, references);

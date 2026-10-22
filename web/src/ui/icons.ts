@@ -5,6 +5,7 @@ import {
   Clapperboard,
   Eye,
   EyeOff,
+  Film,
   Gauge,
   Image,
   Lock,
@@ -63,6 +64,7 @@ import {
   Spline,
   Trash2,
   Undo2,
+  X,
   type IconNode,
 } from "lucide";
 
@@ -113,6 +115,8 @@ export const ICONS = {
   unlock: LockOpen,
   music: Music,
   pin: Pin,
+  close: X,
+  film: Film,
   loop: Repeat,
   path: Route,
   tween: Wand2,

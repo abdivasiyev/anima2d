@@ -6,12 +6,14 @@
  * fingers and a resting palm only ever pan, zoom, rotate, or tap for undo and redo.
  */
 import { assetUrl, uploadAsset } from "../api";
+import { referenceBoard } from "./references";
 import {
   addAudio,
   addDrawingLayer,
   addItems,
   addLightLayer,
   addReferenceLayer,
+  setReferences,
   setLight,
   clearMotion,
   recolorAll,
@@ -55,6 +57,7 @@ import {
   makeItem,
   makeMotionKey,
   makeProjectFont,
+  makeReference,
   parseFade,
   parseFontFamily,
   parseFontSize,
@@ -283,6 +286,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const zoomLabel = h("button", { type: "button", class: "btn zoom hide-narrow", title: "Fit to screen (0)" }, "100%");
   const symmetryBtn = iconButton("symmetry", "Mirror symmetry", "M");
   const guidesBtn = iconButton("grid", "Guides: safe areas and grid");
+  const boardBtn = iconButton("image", "Reference board", "W");
   const undoBtn = iconButton("undo", "Undo", "⌘Z");
   const redoBtn = iconButton("redo", "Redo", "⇧⌘Z");
   const fsBtn = iconButton("fullscreen", "Fullscreen", "F");
@@ -296,6 +300,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
     saveState,
     h("div", { class: "spacer" }),
     zoomLabel,
+    boardBtn,
     guidesBtn,
     symmetryBtn,
     h("div", { class: "sep" }),
@@ -424,7 +429,33 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   const selCount = h("span", { class: "selbar-count" });
   const selbar = h("div", { class: "selbar", hidden: true }, selCount, h("div", { class: "sep" }), selDup, selColor, selFlip, selFront, selBack, h("div", { class: "sep" }), selDelete);
 
-  const workspace = h("div", { class: "workspace" }, stage, rail, selbar, colorPop, toolPop, stabPop, onionPop, guidesPop);
+  // The reference board floats over the workspace; its references are the project's.
+  const board = referenceBoard({
+    change: (refs) => {
+      edit(setReferences(project(), refs));
+    },
+    add: async (accept, kind) => {
+      const file = await pickFile(accept);
+      if (file === undefined) return undefined;
+      const id = await upload(file);
+      if (!id.ok) {
+        say(id.error);
+        return undefined;
+      }
+      say("Added to the board");
+      return makeReference(id.value, kind, label(file.name.replace(/\.[^.]+$/, ""), "Reference"), true);
+    },
+    trace: (i) => {
+      const r = project().references[i];
+      if (r !== undefined && edit(addReferenceLayer(project(), r.asset, r.media, r.name), { layer: layerIdx + 1 })) say("Under the drawings as a locked layer at half strength");
+    },
+    pickColour: (hex) => {
+      setColor(hex);
+      say(`Colour ${hex}`);
+    },
+    say: (text) => { say(text); },
+  });
+  const workspace = h("div", { class: "workspace" }, stage, rail, selbar, colorPop, toolPop, stabPop, onionPop, guidesPop, board.el);
 
   // Timeline.
   const prevBtn = iconButton("prev", "Previous drawing", ",");
@@ -608,6 +639,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   /** Every layer below and above the one being edited, at the playhead. */
   const renderScene = (): void => {
     const p = project();
+    board.sync(p, t);
     belowCtx.clearRect(0, 0, W, H);
     aboveCtx.clearRect(0, 0, W, H);
     // Playing, every layer comes from the cache onto one canvas (as each played frame
@@ -2790,6 +2822,7 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
   clearPins.addEventListener("click", () => { pins.clear(); closePopovers(); renderOnion(); renderTimeline(); say("Light table cleared"); }, opts);
   traceReset.addEventListener("click", () => { trace = [0, 0]; setTracing(false); renderOnion(); }, opts);
   guidesBtn.addEventListener("click", () => { openPopover(guidesPop, guidesBtn); }, opts);
+  boardBtn.addEventListener("click", () => { board.toggle(); boardBtn.classList.toggle("on", board.open); }, opts);
   safeToggle.addEventListener("change", () => { updateSettings("safeAreas", safeToggle.checked); compositeSoon(); }, opts);
   gridToggle.addEventListener("change", () => { updateSettings("grid", gridToggle.checked); compositeSoon(); }, opts);
   symmetryBtn.addEventListener("click", () => { updateSettings("symmetry", !settings.symmetry); compositeSoon(); }, opts);
@@ -2946,6 +2979,10 @@ export const editorScreen = (opened: Opened, go: (hash: string) => void, signal:
           spaceHeld = true;
           if (playing) stop();
           else play();
+          return;
+        case "w":
+          board.toggle();
+          boardBtn.classList.toggle("on", board.open);
           return;
         case "o":
           updateSettings("onion", !settings.onion);

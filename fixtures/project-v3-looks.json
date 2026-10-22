@@ -292,5 +292,19 @@
    "family": "Caveat",
    "asset": "font-caveat"
   }
+ ],
+ "references": [
+  {
+   "asset": "ref-walk-cycle",
+   "media": "video",
+   "name": "Walk cycle",
+   "follow": true
+  },
+  {
+   "asset": "ref-character-sheet",
+   "media": "image",
+   "name": "Character sheet",
+   "follow": false
+  }
  ]
 }
