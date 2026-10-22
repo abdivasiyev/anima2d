@@ -12,7 +12,7 @@ const names = {
   lock: "lock", unlock: "lock-open", fit: "scan", image: "image", newDrawing: "square-plus", newLayer: "copy-plus",
   folder: "folder-open", server: "server", light: "lightbulb", hold: "move-horizontal",
   pin: "pin", eyedropper: "pipette", trace: "hand", film: "film", references: "images",
-  settings: "settings-2", newChat: "square-pen", send: "arrow-up", stop: "square", step: "check", alert: "circle-alert",
+  settings: "settings-2", newChat: "square-pen", send: "arrow-up", stop: "square", step: "check", alert: "circle-alert", up: "arrow-up", down: "arrow-down",
 };
 
 const attrs = (o) => Object.entries(o).map(([k, v]) => `${k}="${v}"`).join(" ");

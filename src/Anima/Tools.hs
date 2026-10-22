@@ -109,8 +109,9 @@ projectTools =
         ["after"]
     , ToolSpec
         "set_layer"
-        "Change a layer's blend, clipping, motion (keyframes that move, scale, turn and fade the whole layer), depth (parallax), effects (drop shadow, rim light) or, for a light layer, its light. See item_format for the JSON. Leave a key out to keep it; null clears motion or effects."
+        "Rename a layer, or change its blend, clipping, motion (keyframes that move, scale, turn and fade the whole layer), depth (parallax), effects (drop shadow, rim light) or, for a light layer, its light. See item_format for the JSON. Leave a key out to keep it; null clears motion or effects."
         [ ("layer", str layerHelp)
+        , ("name", str "A new name, 1 to 40 characters")
         , ("blend", str "normal | multiply | screen | overlay | add | darken | lighten")
         , ("clip", bool "Clip to the layer below")
         , ("motion", object ["type" .= ["object" :: Text, "null"], "description" .= ("{pivot:[x,y], keys:[{frame, position:[dx,dy], scale, rotation, opacity, ease}]}" :: Text)])

@@ -301,6 +301,18 @@ main = do
     void (w.key "z" True False) >> pump 30
     c2 <- state
     check "⌘Z undoes the assistant's change" ("shape" `notElem` kinds c2) (show (kinds c2, itemsBefore))
+    -- The layer panel: rename, opacity (a drag is one undo step), blend, depth, a shadow.
+    p0 <- state
+    let
+        li = p0.onLayer
+        layerOf p = case p.edited of
+            Just pr -> lookup li (zip [0 ..] (viewProject pr).stack)
+            Nothing -> Nothing
+    w.openLayerPanel li >> pump 30
+    forM_ [("name", Aeson.String "Sky"), ("opacity", Aeson.Number 0.5), ("opacity", Aeson.Number 0.4), ("blend", Aeson.String "multiply"), ("depth", Aeson.Number 3), ("shadow", Aeson.Bool True)] $ \(k, v) -> w.setInPanel k v >> pump 20
+    p1 <- state
+    check "the panel renames and restyles the layer" (fmap (\l -> (l.name, l.opacity, l.mixing, l.distance, isJust l.shadow)) (layerOf p1) == Just ("Sky", 0.4, Multiply, 3, True)) (show (fmap (\l -> (l.name, l.opacity, l.mixing, l.distance)) (layerOf p1)))
+    check "a slider's drag is one undo step" (p1.undoSteps - p0.undoSteps == 5) (show (p1.undoSteps - p0.undoSteps))
     -- Export, as the dialogs hand it over: a small MP4 of the project.
     let
         film = dir </> "film.mp4"

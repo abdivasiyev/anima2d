@@ -28,6 +28,7 @@ import Numeric (showHex)
 import System.FilePath (takeBaseName, takeExtension, (</>))
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
@@ -130,6 +131,10 @@ data State = State
     , saveTimer :: Maybe GLib.Source
     , shiftHeld :: Bool
     , spaceHeld :: Bool
+    , lastKey :: Maybe Text
+    {- ^ The setting last changed through a control (a slider's drag), so its changes merge
+    into one undo step.
+    -}
     }
 
 initial :: State
@@ -165,6 +170,7 @@ initial =
         , saveTimer = Nothing
         , shiftHeld = False
         , spaceHeld = False
+        , lastKey = Nothing
         }
 
 -- | Run on the GTK thread.
@@ -225,6 +231,11 @@ data Window = Window
     -- ^ A message to the assistant, as Send does.
     , exportFile :: Export -> FilePath -> IO ()
     -- ^ The film to a file, as Export does after its dialogs.
+    , openLayerPanel :: Int -> IO ()
+    , setInPanel :: Text -> Aeson.Value -> IO ()
+    {- ^ One of the layer panel's controls set as a person would (name, opacity, depth,
+    blend, clip, shadow, up, down).
+    -}
     }
 
 data Phase = Press | Move | Release
@@ -723,7 +734,7 @@ buildWindow = do
                 Left why -> say why
                 Right p' -> do
                     o' <- reopen o p'
-                    writeIORef st s {open = Just o', past = take 200 (o.project : s.past), future = [], dirty = True}
+                    writeIORef st s {open = Just o', past = take 200 (o.project : s.past), future = [], dirty = True, lastKey = Nothing}
                     Gtk.labelSetText saveState "Saving…"
                     scheduleSave
                     redraw
@@ -732,7 +743,7 @@ buildWindow = do
             case (s.open, s.past) of
                 (Just o, p : rest) -> do
                     o' <- reopen o p
-                    writeIORef st s {open = Just o', past = rest, future = o.project : s.future, dirty = True}
+                    writeIORef st s {open = Just o', past = rest, future = o.project : s.future, dirty = True, lastKey = Nothing}
                     scheduleSave >> redraw
                 _ -> pure ()
         redo = do
@@ -740,7 +751,7 @@ buildWindow = do
             case (s.open, s.future) of
                 (Just o, p : rest) -> do
                     o' <- reopen o p
-                    writeIORef st s {open = Just o', future = rest, past = o.project : s.past, dirty = True}
+                    writeIORef st s {open = Just o', future = rest, past = o.project : s.past, dirty = True, lastKey = Nothing}
                     scheduleSave >> redraw
                 _ -> pure ()
         scheduleSave = do
@@ -827,6 +838,22 @@ buildWindow = do
             s <- readIORef st
             commit (f s.layer)
         restyle key val = layerEdit (\li p -> restyleLayer li (KeyMap.fromList [(key, val)]) p)
+        -- A change through a control: the same setting again (a slider dragged) replaces the
+        -- last change instead of adding an undo step.
+        commitKeyed k f = do
+            s <- readIORef st
+            case s.open of
+                Just o
+                    | s.lastKey == Just k
+                    , not (null s.past) -> case f o.project of
+                        Left why -> say why
+                        Right p' -> do
+                            o' <- reopen o p'
+                            writeIORef st s {open = Just o', future = [], dirty = True}
+                            Gtk.labelSetText saveState "Saving…"
+                            scheduleSave
+                            redraw
+                _ -> commit f >> modifyIORef' st (\x -> x {lastKey = Just k})
         -- The object eraser: the topmost item under the pen on the edited drawing goes.
         eraseAt (lx, ly) s = case s.open >>= \o -> lookup s.layer (zip [0 ..] o.view.stack) of
             Just LayerView {kind = DrawingView holdLast cels}
@@ -1516,6 +1543,169 @@ buildWindow = do
                 | otherwise -> modifyIORef' st (\s -> s {panX = s.panX - dx * 12, panY = s.panY - dy * 12})
         Gtk.widgetQueueDraw canvas
         pure True
+    -- The layer panel: a layer's name, opacity, blend, clipping, depth, effects and, for a
+    -- light, its light; and its place in the stack. Opened from the timeline's layer names.
+    panelLayer <- newIORef (0 :: Int)
+    panelSyncing <- newIORef False
+    panel <- Gtk.popoverNew (Just timeline)
+    Gtk.popoverSetPosition panel Gtk.PositionTypeRight
+    pGrid <- new Gtk.Grid [#rowSpacing := 8, #columnSpacing := 10, #margin := 14]
+    pName <- Gtk.entryNew
+    pOpacity <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 1 0.01
+    pBlend <- Gtk.comboBoxTextNew
+    forM_ [minBound .. maxBound :: Blend] $ \bl -> Gtk.comboBoxTextAppend pBlend (Just (blendName bl)) (Text.toTitle (blendName bl))
+    pClip <- Gtk.checkButtonNewWithLabel "Clip to the layer below"
+    pDepth <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0.2 20 0.1
+    pShadow <- Gtk.checkButtonNewWithLabel "Drop shadow"
+    pShadowC <- Gtk.colorButtonNew
+    pRim <- Gtk.checkButtonNewWithLabel "Rim light"
+    pRimC <- Gtk.colorButtonNew
+    pLightC <- Gtk.colorButtonNew
+    pIntensity <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 1 0.01
+    pRadius <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 10 4000 10
+    pSoft <- Gtk.scaleNewWithRange Gtk.OrientationHorizontal 0 1 0.01
+    pUp <- iconButton "up" "Move up"
+    pDown <- iconButton "down" "Move down"
+    pDelete <- iconButton "remove" "Delete layer"
+    forM_ [pOpacity, pDepth, pIntensity, pRadius, pSoft] $ \sc -> do
+        Gtk.scaleSetValuePos sc Gtk.PositionTypeRight
+        Gtk.widgetSetSizeRequest sc 170 (-1)
+    Gtk.scaleSetDigits pDepth 1
+    Gtk.scaleSetDigits pRadius 0
+    effectsRow <- Gtk.boxNew Gtk.OrientationHorizontal 8
+    pack effectsRow [toW pShadow, toW pShadowC, toW pRim, toW pRimC]
+    moveRow <- Gtk.boxNew Gtk.OrientationHorizontal 2
+    pack moveRow [toW pUp, toW pDown]
+    Gtk.boxPackEnd moveRow pDelete False False 0
+    lightLabels <- forM ["Light", "Intensity", "Radius", "Softness"] (Gtk.labelNew . Just)
+    let
+        rows = [("Name", toW pName), ("Opacity", toW pOpacity), ("Blend", toW pBlend), ("", toW pClip), ("Depth", toW pDepth), ("Effects", toW effectsRow)]
+    forM_ (zip [0 ..] rows) $ \(r, (lbl, mk)) -> do
+        l <- Gtk.labelNew (Just lbl)
+        addClass l "dim"
+        Gtk.labelSetXalign l 1
+        w <- mk
+        Gtk.gridAttach pGrid l 0 r 1 1
+        Gtk.gridAttach pGrid w 1 r 1 1
+    forM_ (zip3 [6 ..] lightLabels [toW pLightC, toW pIntensity, toW pRadius, toW pSoft]) $ \(r, l, mk) -> do
+        addClass l "dim"
+        Gtk.labelSetXalign l 1
+        w <- mk
+        Gtk.gridAttach pGrid l 0 r 1 1
+        Gtk.gridAttach pGrid w 1 r 1 1
+    Gtk.gridAttach pGrid moveRow 0 10 2 1
+    Gtk.containerAdd panel pGrid
+    lightWidgets <- (<>) <$> mapM toW lightLabels <*> sequence [toW pLightC, toW pIntensity, toW pRadius, toW pSoft]
+    let
+        panelView = do
+            s <- readIORef st
+            li <- readIORef panelLayer
+            pure (s.open >>= \o -> lookup li (zip [0 ..] o.view.stack))
+        -- One setting of the panel's layer, as the library's restyle takes it.
+        setLayer key val = do
+            syncing <- readIORef panelSyncing
+            li <- readIORef panelLayer
+            unless syncing $ commitKeyed (key <> Text.pack (show li)) (restyleLayer li (KeyMap.fromList [(Key.fromText key, val)]))
+        effectsNow = do
+            mine <- panelView
+            sh <- Gtk.toggleButtonGetActive pShadow
+            ri <- Gtk.toggleButtonGetActive pRim
+            shC <- getColour pShadowC
+            riC <- getColour pRimC
+            let
+                was = mine
+                shadowJ = case was >>= (.shadow) of
+                    Just x -> Aeson.object ["color" Aeson..= shC, "opacity" Aeson..= x.opacity, "offset" Aeson..= [fst x.offset, snd x.offset], "blur" Aeson..= x.blur]
+                    Nothing -> Aeson.object ["color" Aeson..= shC, "opacity" Aeson..= (0.35 :: Double), "offset" Aeson..= [14 :: Double, 22], "blur" Aeson..= (14 :: Double)]
+                rimJ = case was >>= (.rim) of
+                    Just x -> Aeson.object ["color" Aeson..= riC, "opacity" Aeson..= x.opacity, "width" Aeson..= x.width, "angle" Aeson..= x.angle]
+                    Nothing -> Aeson.object ["color" Aeson..= riC, "opacity" Aeson..= (0.85 :: Double), "width" Aeson..= (6 :: Double), "angle" Aeson..= (-2.36 :: Double)]
+            pure
+                $ if sh || ri
+                    then Aeson.object (["shadow" Aeson..= shadowJ | sh] <> ["rim" Aeson..= rimJ | ri])
+                    else Aeson.Null
+        lightNow = do
+            mine <- panelView
+            c <- getColour pLightC
+            i <- Gtk.rangeGetValue pIntensity
+            r <- Gtk.rangeGetValue pRadius
+            so <- Gtk.rangeGetValue pSoft
+            pure $ case mine of
+                Just LayerView {kind = LightLayerView lv} -> Just (Aeson.object ["shape" Aeson..= (if lv.shape == LinearLight then "linear" else "radial" :: Text), "color" Aeson..= c, "intensity" Aeson..= i, "center" Aeson..= [fst lv.center, snd lv.center], "radius" Aeson..= r, "angle" Aeson..= lv.angle, "softness" Aeson..= so])
+                _ -> Nothing
+        -- The controls from the layer as it is now.
+        fillPanel = do
+            mine <- panelView
+            forM_ mine $ \l -> do
+                writeIORef panelSyncing True
+                Gtk.entrySetText pName l.name
+                Gtk.rangeSetValue pOpacity l.opacity
+                _ <- Gtk.comboBoxSetActiveId pBlend (Just (blendName l.mixing))
+                Gtk.toggleButtonSetActive pClip l.clipped
+                Gtk.rangeSetValue pDepth l.distance
+                Gtk.toggleButtonSetActive pShadow (isJust l.shadow)
+                Gtk.toggleButtonSetActive pRim (isJust l.rim)
+                setColour pShadowC (maybe "#1c1c1e" (.color) l.shadow)
+                setColour pRimC (maybe "#ffd27a" (.color) l.rim)
+                case l.kind of
+                    LightLayerView lv -> do
+                        mapM_ (`Gtk.widgetSetVisible` True) lightWidgets
+                        setColour pLightC lv.color
+                        Gtk.rangeSetValue pIntensity lv.intensity
+                        Gtk.rangeSetValue pRadius lv.radius
+                        Gtk.rangeSetValue pSoft lv.softness
+                    _ -> mapM_ (`Gtk.widgetSetVisible` False) lightWidgets
+                writeIORef panelSyncing False
+        openPanel li = do
+            s <- readIORef st
+            forM_ s.open $ \o -> do
+                writeIORef panelLayer li
+                let
+                    row = fromMaybe 0 (lookup li (zip (map fst (reverse (zip [0 ..] o.view.stack))) [0 :: Int ..]))
+                rect <- new Gdk.Rectangle [#x := 0, #y := round (rulerH + fromIntegral row * rowH), #width := round headerW, #height := round rowH]
+                Gtk.popoverSetPointingTo panel rect
+                Gtk.widgetShowAll pGrid
+                fillPanel
+                Gtk.popoverPopup panel
+                modifyIORef' st (\x -> x {layer = li})
+                redraw
+        -- A control set from code, as a person would set it (for the UI test).
+        panelSet key val = case (key, val) of
+            ("name", Aeson.String t) -> Gtk.entrySetText pName t >> Gtk.widgetActivate pName >> pure ()
+            ("opacity", Aeson.Number n) -> Gtk.rangeSetValue pOpacity (realToFrac n)
+            ("depth", Aeson.Number n) -> Gtk.rangeSetValue pDepth (realToFrac n)
+            ("blend", Aeson.String t) -> void (Gtk.comboBoxSetActiveId pBlend (Just t))
+            ("clip", Aeson.Bool b) -> Gtk.toggleButtonSetActive pClip b
+            ("shadow", Aeson.Bool b) -> Gtk.toggleButtonSetActive pShadow b
+            ("up", _) -> Gtk.buttonClicked pUp
+            ("down", _) -> Gtk.buttonClicked pDown
+            _ -> pure ()
+    _ <- on pName #activate (Gtk.entryGetText pName >>= setLayer "name" . Aeson.String)
+    _ <- on pOpacity #valueChanged (Gtk.rangeGetValue pOpacity >>= setLayer "opacity" . Aeson.toJSON)
+    _ <- on pDepth #valueChanged (Gtk.rangeGetValue pDepth >>= setLayer "depth" . Aeson.toJSON)
+    _ <- on pBlend #changed (Gtk.comboBoxGetActiveId pBlend >>= mapM_ (setLayer "blend" . Aeson.String))
+    _ <- on pClip #toggled (Gtk.toggleButtonGetActive pClip >>= setLayer "clip" . Aeson.Bool)
+    forM_ [pShadow, pRim] $ \b -> on b #toggled (effectsNow >>= setLayer "effects")
+    forM_ [pShadowC, pRimC] $ \b -> on b #colorSet (effectsNow >>= setLayer "effects")
+    _ <- on pLightC #colorSet (lightNow >>= mapM_ (setLayer "light"))
+    forM_ [pIntensity, pRadius, pSoft] $ \sc -> on sc #valueChanged (lightNow >>= mapM_ (setLayer "light"))
+    forM_ [(pUp, 1), (pDown, -1)] $ \(b, by) -> on b #clicked $ do
+        li <- readIORef panelLayer
+        s <- readIORef st
+        let
+            count = maybe 0 (\o -> length o.view.stack) s.open
+            to = max 0 (min (count - 1) (li + by))
+        unless (to == li) $ do
+            commit (moveLayer li by)
+            writeIORef panelLayer to
+            modifyIORef' st (\x -> x {layer = to})
+            openPanel to
+    _ <- on pDelete #clicked $ do
+        li <- readIORef panelLayer
+        Gtk.popoverPopdown panel
+        commit (removeLayerAt li)
+        modifyIORef' st (\x -> x {layer = max 0 (x.layer - 1)})
+        redraw
     -- The timeline: click to move the playhead (and pick the layer); wheel scrolls it.
     _ <- on timeline #draw $ \ctx -> do
         w <- fromIntegral <$> Gtk.widgetGetAllocatedWidth timeline
@@ -1526,6 +1716,8 @@ buildWindow = do
     _ <- on timeline #buttonPressEvent $ \ev -> do
         x <- get ev #x
         y <- get ev #y
+        kindOf <- Gdk.getEventButtonType ev
+        button <- get ev #button
         s <- readIORef st
         forM_ s.open $ \o -> do
             let
@@ -1536,6 +1728,8 @@ buildWindow = do
             stop
             writeIORef st s {playhead = if x > headerW then f else s.playhead, layer = fromMaybe s.layer picked}
             redraw
+            -- A double click or a right click on a layer's name opens its panel.
+            when (x <= headerW && (kindOf == Gdk.EventType2buttonPress || button == 3)) (mapM_ openPanel picked)
         pure True
     _ <- on timeline #scrollEvent $ \ev -> do
         dx <- get ev #deltaX
@@ -1644,7 +1838,7 @@ buildWindow = do
         clickNamed n = case n of
             "Follow" -> Gtk.buttonClicked followB
             _ -> forM_ (lookup n buttons) Gtk.buttonClicked
-    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo}
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo, openLayerPanel = openPanel, setInPanel = panelSet}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
@@ -2210,6 +2404,9 @@ saveAs parent title f = do
     path <- if answer == fromIntegral (fromEnum Gtk.ResponseTypeAccept) then Gtk.fileChooserGetFilename d else pure Nothing
     Gtk.widgetDestroy d
     pure path
+
+blendName :: Blend -> Text
+blendName = Text.toLower . Text.pack . show
 
 -- | Asks for a picture or video file to put on the board.
 chooseFile :: Gtk.Window -> IO (Maybe FilePath)

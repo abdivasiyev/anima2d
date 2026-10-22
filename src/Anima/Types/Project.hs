@@ -95,6 +95,7 @@ module Anima.Types.Project
     , pickAnyLayer
     , setCamera
     , restyleLayer
+    , moveLayer
     , AssetId
     , Revision
     , firstRevision
@@ -1445,13 +1446,26 @@ restyleLayer li o p = do
     op <- given "opacity" opacityFrom lk.opacity
     d <- given "depth" depthFrom lk.depth
     e <- given "effects" effectsFrom lk.effects
+    nm <- given "name" labelFrom lk.label
     let
-        lk' = lk {blend = b, clip = c, motion = m, depth = d, effects = e, visible = vis, locked = lock, opacity = op}
+        lk' = lk {blend = b, clip = c, motion = m, depth = d, effects = e, visible = vis, locked = lock, opacity = op, label = nm}
     l' <- case l of
         DrawingLayer _ holdLast cels rig -> Right (DrawingLayer lk' holdLast cels rig)
         ReferenceLayer _ a media -> Right (ReferenceLayer lk' a media)
         LightLayer _ lit -> LightLayer lk' <$> given "light" lightFrom lit
     layers' <- nonEmpty "expected a layer" [if i == li then l' else x | (i, x) <- zip [0 ..] ls]
+    checked p {layers = layers'}
+
+-- | Layer `li` moved `by` places up (positive) or down the stack, kept within it.
+moveLayer :: Int -> Int -> Project -> Either Text Project
+moveLayer li by p = do
+    let
+        ls = NonEmpty.toList p.layers
+        to = max 0 (min (length ls - 1) (li + by))
+    l <- maybe (Left "expected a layer") Right (lookup li (zip [0 ..] ls))
+    let
+        rest = [x | (i, x) <- zip [0 ..] ls, i /= li]
+    layers' <- nonEmpty "expected a layer" (take to rest <> [l] <> drop to rest)
     checked p {layers = layers'}
 
 -- | A new project with one drawing layer and one empty drawing.
