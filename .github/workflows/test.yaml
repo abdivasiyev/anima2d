@@ -1,0 +1,54 @@
+# The tests, on GitHub: the flake's checks on Linux (the server's suite, the editor's
+# type check, lint and specs, the formatters), and the desktop's suites on macOS (its
+# unit spec, and the UI test that drives the real window offscreen, its snapshots kept).
+# The release workflow runs this first.
+name: Test
+
+on:
+    # Branches only: a tag runs these through the release workflow.
+    push:
+        branches: ["**"]
+    pull_request:
+    workflow_call:
+
+jobs:
+    flake:
+        name: Server and web (flake check)
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Check the flake
+              run: nix flake check -L --show-trace
+
+    desktop:
+        name: Desktop (unit and UI)
+        runs-on: macos-15
+        timeout-minutes: 120
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Unit spec
+              run: nix develop .#desktop -c cabal --project-file=cabal.project.desktop test anima2d-desktop:spec --test-show-details=direct
+
+            - name: UI test
+              run: nix develop .#desktop -c cabal --project-file=cabal.project.desktop test anima2d-desktop:ui --test-show-details=direct
+
+            - name: Keep the UI snapshots
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ui-snapshots
+                  path: desktop/ui-snapshots/*.png
+                  if-no-files-found: ignore

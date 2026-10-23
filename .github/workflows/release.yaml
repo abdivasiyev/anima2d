@@ -1,6 +1,7 @@
-# The desktop app for macOS: built on a v* tag and published as a release with its
-# disk image, or built by hand (Actions → Release → Run workflow) as a test, kept as an
-# artifact and not published. Runs on GitHub only; Forgejo runs .forgejo/workflows.
+# The desktop app for macOS, once the tests pass: built on a v* tag and published as a
+# release with its disk image, or built by hand (Actions → Release → Run workflow) as a
+# test, kept as an artifact and not published. Runs on GitHub only; Forgejo runs
+# .forgejo/workflows.
 name: Release
 
 on:
@@ -16,8 +17,13 @@ permissions:
     contents: write
 
 jobs:
+    tests:
+        name: Tests
+        uses: ./.github/workflows/test.yaml
+
     macos:
         name: macOS (Apple silicon)
+        needs: tests
         runs-on: macos-15
         timeout-minutes: 150
 
