@@ -125,7 +125,9 @@ any headers your sign-in gate needs). It shares the project format and the parse
 the server, so projects move freely between the browser, the iPad and the desktop. Its
 renderer is drawn with Cairo and matches the browser's.
 
-It draws with the browser's brushes (pen, pencil, marker, paint), scatter brushes, the
+It follows macOS's look: the window buttons on the left, a toolbar in the title bar, the
+system font and controls, a menu bar with the usual shortcuts, and light or dark as the
+system is set (`ANIMA2D_APPEARANCE=light` or `dark` overrides it). It draws with the browser's brushes (pen, pencil, marker, paint), scatter brushes, the
 eraser, shapes, text and the paint bucket; selects, moves, scales and turns items; adds,
 duplicates and holds drawings and layers, with undo and onion skin; and it updates live
 when another device or an agent saves. The sidebar holds the reference board (videos

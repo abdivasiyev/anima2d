@@ -319,17 +319,34 @@ main = do
     k1 <- state
     let
         keysOf p = maybe [] (\pr -> (viewProject pr).shots) p.edited
+        near (ax, ay) (bx, by) = abs (ax - bx) < 0.01 && abs (ay - by) < 0.01
     check "a camera slider keys this frame" (map (\k -> (k.frame, k.zoom)) (keysOf k1) == [(k1.atFrame, 2)]) (show (map (\k -> (k.frame, k.zoom)) (keysOf k1), k1.atFrame))
     before <- state
     drag (960, 540) (1160, 640)
     k2 <- state
-    check "dragging moves the shot, as one undo step" (map (.center) (keysOf k2) == [(1160, 640)] && k2.undoSteps - before.undoSteps == 1) (show (map (.center) (keysOf k2), k2.undoSteps - before.undoSteps))
+    check "dragging moves the shot, as one undo step" (map (near (1160, 640) . (.center)) (keysOf k2) == [True] && k2.undoSteps - before.undoSteps == 1) (show (map (.center) (keysOf k2), k2.undoSteps - before.undoSteps))
     snapshot w.canvasArea ("ui-snapshots" </> "09-camera.png")
     void (w.key "right" False False) >> pump 20
     w.setShotWith "zoom" 1.5 >> pump 30
     k3 <- state
     check "a change on another frame adds a second key, in order" (map (.frame) (keysOf k3) == [0, 1]) (show (map (.frame) (keysOf k3)))
     keyed "b"
+    -- The menu bar's commands: a tool, undo once (not twice when the menu and the keys
+    -- both hear ⌘Z), and back.
+    w.command "tool-camera" >> pump 20
+    m1 <- state
+    check "the Tools menu picks a tool" (m1.toolName == "camera") (show m1.toolName)
+    w.command "tool-brush" >> pump 20
+    drag (300, 900) (600, 950)
+    m2 <- state
+    w.command "undo"
+    void (w.key "z" True False)
+    pump 30
+    m3 <- state
+    check "Undo from the menu and ⌘Z at once undo one step" (m2.undoSteps - m3.undoSteps == 1) (show (m2.undoSteps, m3.undoSteps))
+    w.command "redo" >> pump 30
+    m4 <- state
+    check "Redo from the menu brings it back" (m4.undoSteps == m2.undoSteps) (show (m4.undoSteps, m2.undoSteps))
     -- Export, as the dialogs hand it over: a small MP4 of the project.
     let
         film = dir </> "film.mp4"

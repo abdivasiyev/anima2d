@@ -16,7 +16,7 @@ import Anima.Types.Project hiding (duration)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, throwIO, try)
-import Control.Monad (forM, forM_, unless, void, when, zipWithM_)
+import Control.Monad (forM, forM_, unless, void, when, zipWithM_, (>=>))
 import Data.Bifunctor (bimap)
 import Data.Char (toLower)
 import Data.GI.Base (AttrOp (..), get, new, on)
@@ -25,6 +25,7 @@ import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Text (Text)
+import GHC.Clock (getMonotonicTime)
 import Numeric (showHex)
 import System.FilePath (takeBaseName, takeExtension, (</>))
 
@@ -42,6 +43,7 @@ import GI.Cairo.Render.Matrix qualified as M
 import GI.GLib qualified as GLib
 import GI.Gdk qualified as Gdk
 import GI.GdkPixbuf qualified as Pixbuf
+import GI.Gio qualified as Gio
 import GI.Gtk qualified as Gtk
 import GI.Pango qualified as Pango
 
@@ -54,7 +56,7 @@ import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
 import Anima.Desktop.Scene (Camera (..), Env (..), cameraAt, celAt, drawFrame, drawLayers, duration, newCache, placement, renderPng)
 import Anima.Desktop.Secrets (ApiKey, keyText, loadKey, parseApiKey, saveKey)
-import Anima.Desktop.Style (accent, applyStyle, dimText, ground, hairline, iconImage, rgb, rgba, rounded, surface, textColour, uiText, workspace)
+import Anima.Desktop.Style (accent, applyStyle, celEmpty, celFill, dimText, ground, hairline, iconImage, paperShadow, raised, rgb, rgba, rounded, surface, textColour, uiText, workspace)
 import Anima.Desktop.Video (ffmpegPath, frameAt, lengthOf, newFrames)
 
 import Anima.Desktop.Fill qualified as Fill
@@ -241,6 +243,8 @@ data Window = Window
     -- ^ A message to the assistant, as Send does.
     , exportFile :: Export -> FilePath -> IO ()
     -- ^ The film to a file, as Export does after its dialogs.
+    , command :: Text -> IO ()
+    -- ^ A menu command by its action name (undo, export, tool-brush…).
     , setShotWith :: Text -> Double -> IO ()
     -- ^ One of the camera bar's sliders set as a person would (zoom, turn, shake).
     , openLayerPanel :: Int -> IO ()
@@ -278,27 +282,95 @@ data Probe = Probe
 
 runApp :: IO ()
 runApp = do
-    _ <- Gtk.init Nothing
-    w <- buildWindow
-    _ <- on w.window #destroy Gtk.mainQuit
-    -- First run asks where projects live; after that the choice is remembered.
-    saved <- loadConnection
-    c <- case saved of
-        Just c -> pure (Just c)
-        Nothing -> do
-            r <- connectionDialog w.window Nothing
-            forM_ r saveConnection
-            pure r
-    case c of
-        Just conn -> w.connectTo conn
-        Nothing -> w.say "Choose where projects live with Connection…"
-    Gtk.main
+    app <- new Gtk.Application [#applicationId := "io.github.abdivasiyev.anima2d"]
+    _ <- on app #activate $ do
+        -- The menu bar first, so macOS shows it with the window.
+        menuBar app
+        w <- buildWindow
+        Gtk.applicationAddWindow app w.window
+        commands app w
+        -- First run asks where projects live; after that the choice is remembered.
+        saved <- loadConnection
+        c <- case saved of
+            Just c -> pure (Just c)
+            Nothing -> do
+                r <- connectionDialog w.window Nothing
+                forM_ r saveConnection
+                pure r
+        case c of
+            Just conn -> w.connectTo conn
+            Nothing -> w.say "Choose where projects live with Settings… (⌘,)"
+    _ <- Gio.applicationRun app Nothing
+    pure ()
+
+{- | The menu bar, as a Mac app has it: the app's menu, File, Edit, View, Playback, Tools and
+Help. GTK puts it in macOS's own menu bar; on Linux it is the window's.
+-}
+menuBar :: Gtk.Application -> IO ()
+menuBar app = do
+    let
+        section items = do
+            m <- Gio.menuNew
+            forM_ items $ \(lbl, action) -> Gio.menuAppend m (Just lbl) (Just ("app." <> action))
+            pure m
+        menu sections = do
+            m <- Gio.menuNew
+            forM_ sections (section >=> Gio.menuAppendSection m Nothing)
+            pure m
+    appMenu <- menu [[("About anima2D", "about")], [("Settings…", "settings"), ("Connect a Model…", "connect-model")]]
+    file <- menu [[("New Project…", "new-project"), ("Projects", "projects")], [("Export…", "export")]]
+    edit <- menu [[("Undo", "undo"), ("Redo", "redo")], [("Select All", "select-all"), ("Delete", "delete")]]
+    view <- menu [[("Fit to Window", "fit"), ("Onion Skin", "onion")], [("Show Sidebar", "sidebar"), ("Assistant", "assistant"), ("References", "references")]]
+    playback <- menu [[("Play / Pause", "play")], [("Previous Frame", "prev-frame"), ("Next Frame", "next-frame")]]
+    tools <- menu [[("Select", "tool-select"), ("Brush", "tool-brush"), ("Scatter", "tool-scatter"), ("Eraser", "tool-eraser"), ("Shapes", "tool-shapes"), ("Fill", "tool-fill"), ("Text", "tool-text"), ("Camera", "tool-camera")]]
+    help <- menu [[("anima2D on GitHub", "help")]]
+    bar <- Gio.menuNew
+    forM_ [("File", file), ("Edit", edit), ("View", view), ("Playback", playback), ("Tools", tools), ("Help", help)] $ \(lbl, m) -> Gio.menuAppendSubmenu bar (Just lbl) m
+    Gtk.applicationSetAppMenu app (Just appMenu)
+    Gtk.applicationSetMenubar app (Just bar)
+    forM_
+        [ ("about", ["<Primary>i"])
+        , ("settings", ["<Primary>comma"])
+        , ("new-project", ["<Primary>n"])
+        , ("projects", ["<Primary><Shift>p"])
+        , ("export", ["<Primary>e"])
+        , ("undo", ["<Primary>z"])
+        , ("redo", ["<Primary><Shift>z"])
+        , ("select-all", ["<Primary>a"])
+        , ("fit", ["<Primary>0"])
+        , ("sidebar", ["<Primary><Alt>s"])
+        ]
+        $ \(action, keys) -> Gtk.applicationSetAccelsForAction app ("app." <> action) keys
+
+-- | Each menu item, an action on the app that the window carries out.
+commands :: Gtk.Application -> Window -> IO ()
+commands app w =
+    forM_ ["about", "settings", "connect-model", "new-project", "projects", "export", "undo", "redo", "select-all", "delete", "fit", "onion", "sidebar", "assistant", "references", "play", "prev-frame", "next-frame", "help", "tool-select", "tool-brush", "tool-scatter", "tool-eraser", "tool-shapes", "tool-fill", "tool-text", "tool-camera"] $ \name -> do
+        action <- Gio.simpleActionNew name Nothing
+        _ <- on action #activate $ \_ -> case name of
+            "about" -> aboutDialog w.window
+            "help" -> Gtk.showUriOnWindow (Just w.window) "https://github.com/abdivasiyev/anima2d" 0
+            _ -> w.command name
+        Gio.actionMapAddAction app action
+
+aboutDialog :: Gtk.Window -> IO ()
+aboutDialog parent = do
+    d <- Gtk.aboutDialogNew
+    Gtk.windowSetTransientFor d (Just parent)
+    Gtk.aboutDialogSetProgramName d "anima2D"
+    Gtk.aboutDialogSetVersion d (Just "0.1.0")
+    Gtk.aboutDialogSetComments d (Just "A 2D animation studio: draw, animate, light and film, with an assistant that draws with you.")
+    Gtk.aboutDialogSetWebsite d (Just "https://github.com/abdivasiyev/anima2d")
+    Gtk.aboutDialogSetLicenseType d Gtk.LicenseApache20
+    _ <- Gtk.dialogRun d
+    Gtk.widgetDestroy d
 
 -- | Builds and shows the window; nothing is connected yet.
 buildWindow :: IO Window
 buildWindow = do
     applyStyle
     st <- newIORef initial
+    lastCommand <- newIORef ("" :: Text, 0 :: Double)
     frames <- cacheFolder >>= newFrames
     videoFiles <- newIORef (Map.empty :: Map.Map Text (Maybe FilePath))
     boardRef <- newIORef Board {showing = 0, views = Map.empty, picking = False, own = Map.empty, ownPlay = Nothing, shown = [], panFrom = Nothing}
@@ -1859,13 +1931,21 @@ buildWindow = do
         pure True
     -- Keys, as in the browser: tools, frames, drawings, undo.
     let
+        -- A command from the menu bar and from the window's own keys at once (⌘Z reaches
+        -- both on some systems) runs once.
+        guarded name act = do
+            now <- getMonotonicTime
+            (was, at) <- readIORef lastCommand
+            unless (was == name && now - at < 0.2) $ do
+                writeIORef lastCommand (name, now)
+                act
         onKey name cmd shift = do
             s <- readIORef st
             if isNothing s.open
                 then pure False
                 else do
                     case (cmd, Text.toLower name) of
-                        (True, "z") -> (if shift then redo else undo) >> pure True
+                        (True, "z") -> (if shift then guarded "redo" redo else guarded "undo" undo) >> pure True
                         (False, "v") -> Gtk.toggleButtonSetActive selectR True >> pure True
                         (False, "k") -> Gtk.toggleButtonSetActive fillR True >> pure True
                         (False, "escape") -> writeIORef st s {selection = []} >> Gtk.widgetQueueDraw canvas >> pure True
@@ -1876,11 +1956,12 @@ buildWindow = do
                                 celEdit (\li m p -> foldr (\k acc -> acc >>= removeItemAt li m k) (Right p) (sortDesc s.selection))
                                 pure True
                         (True, "a") -> do
-                            t <- target
-                            forM_ t $ \(o, _, n) -> do
-                                writeIORef st s {selection = [i | (i, it) <- zip [0 ..] (celItems o.view s.layer n), not (isEraser it)]}
-                                Gtk.toggleButtonSetActive selectR True
-                                Gtk.widgetQueueDraw canvas
+                            guarded "select-all" $ do
+                                t <- target
+                                forM_ t $ \(o, _, n) -> do
+                                    writeIORef st s {selection = [i | (i, it) <- zip [0 ..] (celItems o.view s.layer n), not (isEraser it)]}
+                                    Gtk.toggleButtonSetActive selectR True
+                                    Gtk.widgetQueueDraw canvas
                             pure True
                         (False, "b") -> Gtk.toggleButtonSetActive brushR True >> pure True
                         (False, "g") -> Gtk.toggleButtonSetActive scatterR True >> pure True
@@ -1959,7 +2040,40 @@ buildWindow = do
         clickNamed n = case n of
             "Follow" -> Gtk.buttonClicked followB
             _ -> forM_ (lookup n buttons) Gtk.buttonClicked
-    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo, openLayerPanel = openPanel, setInPanel = panelSet, setShotWith = shotSet}
+    let
+        runCommand name = do
+            s <- readIORef st
+            let
+                editing = isJust s.open
+                tool r = when editing (Gtk.toggleButtonSetActive r True)
+            case name of
+                "settings" -> Gtk.buttonClicked connBtn
+                "connect-model" -> Gtk.buttonClicked chatSetB
+                "new-project" -> Gtk.buttonClicked newBtn
+                "projects" -> when editing (Gtk.buttonClicked backBtn)
+                "export" -> when editing (Gtk.buttonClicked exportBtn)
+                "undo" -> guarded "undo" undo
+                "redo" -> guarded "redo" redo
+                "select-all" -> void (onKey "a" True False)
+                "delete" -> void (onKey "delete" False False)
+                "fit" -> when editing (Gtk.buttonClicked fitBtn)
+                "onion" -> when editing (Gtk.toggleButtonSetActive onionBtn (not s.onion))
+                "sidebar" -> Gtk.toggleButtonGetActive chatBtn >>= Gtk.toggleButtonSetActive chatBtn . not
+                "assistant" -> Gtk.toggleButtonSetActive chatBtn True >> Gtk.stackSetVisibleChildName side "assistant"
+                "references" -> Gtk.toggleButtonSetActive chatBtn True >> Gtk.stackSetVisibleChildName side "board"
+                "play" -> when editing play
+                "prev-frame" -> when editing (stop >> step (-1))
+                "next-frame" -> when editing (stop >> step 1)
+                "tool-select" -> tool selectR
+                "tool-brush" -> tool brushR
+                "tool-scatter" -> tool scatterR
+                "tool-eraser" -> tool eraserR
+                "tool-shapes" -> tool shapeR
+                "tool-fill" -> tool fillR
+                "tool-text" -> tool textR
+                "tool-camera" -> tool cameraR
+                _ -> pure ()
+    pure Window {window = win, canvasArea = canvas, connectTo = connect, openId = openProject, inspect = probe, say = say, pointer = onPointer, key = onKey, keyUp = onKeyUp, click = clickNamed, addReferenceFile = addReferenceFile, connectAssistant = useModel, tellAssistant = sendChat, exportFile = exportTo, openLayerPanel = openPanel, setInPanel = panelSet, setShotWith = shotSet, command = runCommand}
 
 -- | The hold of drawing `n` (from 1) of layer `li`.
 holdOf :: Int -> Int -> Project -> Either Text Int
@@ -2088,8 +2202,8 @@ drawCanvas s under finishing = do
             pw = fromIntegral v.width
             ph = fromIntegral v.height
         -- A soft shadow under the paper, in screen pixels.
-        forM_ [(12, 0.05), (6, 0.08), (2, 0.14)] $ \(spread, a) -> do
-            C.setSourceRGBA 0 0 0 a
+        forM_ [(12, 0.3), (6, 0.5), (2, 0.9)] $ \(spread, a) -> do
+            rgba (paperShadow, a)
             rounded (s.panX - spread) (s.panY - spread + spread / 2) (pw * s.magnify + 2 * spread) (ph * s.magnify + 2 * spread) (spread + 2)
             C.fill
         C.translate s.panX s.panY
@@ -2167,7 +2281,7 @@ drawCanvas s under finishing = do
             C.save
             C.transform m
             forM_ s.selDrag (C.transform . (.current))
-            C.setSourceRGB 0.18 0.42 1
+            rgb accent
             C.setLineWidth (1.5 * px)
             C.rectangle bx.x0 bx.y0 (bx.x1 - bx.x0) (bx.y1 - bx.y0)
             C.stroke
@@ -2232,7 +2346,7 @@ drawTimeline s w h = do
             let
                 kx = frameX k.frame + unitW / 2
             when (kx >= headerW && kx <= w) $ do
-                rgb (0xf3 / 255, 0xc8 / 255, 0x43 / 255)
+                C.setSourceRGB (0xf3 / 255) (0xc8 / 255) (0x43 / 255)
                 C.moveTo kx (rulerH - 10)
                 C.lineTo (kx + 4) (rulerH - 6)
                 C.lineTo kx (rulerH - 2)
@@ -2262,15 +2376,15 @@ drawTimeline s w h = do
                                 then rgb accent >> C.fill
                                 else
                                     if null cel.items
-                                        then rgba ((1, 1, 1), 0.14) >> C.setLineWidth 1 >> C.stroke
-                                        else rgba ((1, 1, 1), 0.3) >> C.fill
+                                        then rgb celEmpty >> C.setLineWidth 1 >> C.stroke
+                                        else rgb celFill >> C.fill
                 LightLayerView _ -> band y (1, 0.85, 0.5)
                 ReferenceView _ _ -> band y (0.6, 0.6, 0.65)
             rgba hairline
             C.rectangle 0 (y + rowH - 1) w 1
             C.fill
             -- The layer's name, in a column the lanes scroll under.
-            rgb (if li == s.layer then (0x23 / 255, 0x23 / 255, 0x27 / 255) else surface)
+            rgb (if li == s.layer then raised else surface)
             C.rectangle 0 y headerW (rowH - 1)
             C.fill
             when (li == s.layer) $ do

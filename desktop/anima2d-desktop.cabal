@@ -55,6 +55,7 @@ library
                     , gi-gdkpixbuf
                     , gi-glib
                     , gi-gtk3
+                    , gi-gio
                     , haskell-gi-base
                     , http-client
                     , http-client-tls
