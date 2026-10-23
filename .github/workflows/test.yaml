@@ -1,6 +1,6 @@
-# The tests, on GitHub: the flake's checks on Linux (the server's suite, the editor's
-# type check, lint and specs, the formatters), and the desktop's suites on macOS (its
-# unit spec, and the UI test that drives the real window offscreen, its snapshots kept).
+# The tests, on GitHub: on Linux the server's suite, the web editor's type check, lint and
+# specs, and the formatters (each a check of the flake); on macOS the desktop's unit spec
+# and the UI test that drives the real window offscreen, its snapshots kept.
 # The release workflow runs this first.
 name: Test
 
@@ -12,8 +12,9 @@ on:
     workflow_call:
 
 jobs:
-    flake:
-        name: Server and web (flake check)
+    # Each check of the flake, built on its own so it shows as its own job.
+    server:
+        name: Server (Haskell suite)
         runs-on: ubuntu-latest
         timeout-minutes: 90
 
@@ -24,8 +25,38 @@ jobs:
             - name: Install Nix
               uses: cachix/install-nix-action@v31
 
-            - name: Check the flake
-              run: nix flake check -L --show-trace
+            - name: Server tests
+              run: nix build -L --no-link .#checks.x86_64-linux.backend
+
+    web:
+        name: Web (type check, lint, specs)
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Web tests
+              run: nix build -L --no-link .#checks.x86_64-linux.web
+
+    format:
+        name: Formatting and lint (fourmolu, hlint, alejandra)
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Formatters and linters
+              run: nix build -L --no-link .#checks.x86_64-linux.pre-commit-check
 
     desktop:
         name: Desktop (unit and UI)
