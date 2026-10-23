@@ -144,7 +144,7 @@ speaks OpenAI's chat completions, such as OpenAI or a local model in Ollama or L
 The key stays in the system keychain. Each change it makes is an ordinary edit you can
 undo.
 
-`just desktop-ui` drives the real window offscreen (drawing, undo, selection, the board,
+`just web-ui` drives the web editor in Chromium against a real server, and `just desktop-ui` drives the desktop's real window offscreen (drawing, undo, selection, the board,
 the assistant with a scripted model, saving) and writes snapshots of it to `desktop/ui-snapshots/`.
 
 `anima2d-desktop render <project.anima2d.json> <frame> <width> <out.png>` draws one frame

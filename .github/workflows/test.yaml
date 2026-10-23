@@ -1,6 +1,7 @@
 # The tests, on GitHub: on Linux the server's suite, the web editor's type check, lint and
-# specs, and the formatters (each a check of the flake); on macOS the desktop's unit spec
-# and the UI test that drives the real window offscreen, its snapshots kept.
+# specs, and the formatters (each a check of the flake), and the web editor's UI tests in
+# Chromium against the real server; on macOS the desktop's unit spec and the UI test that
+# drives the real window offscreen, its snapshots kept.
 # The release workflow runs this first.
 name: Test
 
@@ -42,6 +43,46 @@ jobs:
 
             - name: Web tests
               run: nix build -L --no-link .#checks.x86_64-linux.web
+
+    web-ui:
+        name: Web UI (Playwright, Chromium)
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Install Nix
+              uses: cachix/install-nix-action@v31
+
+            - name: Build the server and the editor
+              run: nix build -L .#anima2d -o e2e/.server
+
+            - name: Install Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+
+            - name: Install the tests and Chromium
+              working-directory: e2e
+              run: |
+                  npm ci --no-audit --no-fund
+                  npx playwright install --with-deps chromium
+
+            - name: UI tests
+              working-directory: e2e
+              run: ANIMA2D_BIN="$PWD/.server/bin/anima2d" npx playwright test
+
+            - name: Keep the report
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: playwright-report
+                  path: |
+                      e2e/playwright-report
+                      e2e/test-results
+                  if-no-files-found: ignore
 
     format:
         name: Formatting and lint (fourmolu, hlint, alejandra)

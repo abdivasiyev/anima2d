@@ -45,6 +45,11 @@ examples:
 desktop:
     nix develop .#desktop -c cabal --project-file=cabal.project.desktop run anima2d-desktop
 
+# The web editor's UI tests: Chromium against the real server (built from the flake).
+web-ui:
+    nix build .#anima2d -o e2e/.server
+    cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && ANIMA2D_BIN="$PWD/.server/bin/anima2d" npx playwright test
+
 # anima2D.app and its disk image in dist/macos, needing nothing installed where it runs.
 package-macos version="0.1.0":
     desktop/package/macos.sh {{version}}
