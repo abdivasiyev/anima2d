@@ -42,6 +42,7 @@ library
                     , Anima.Desktop.Assistant
                     , Anima.Desktop.Secrets
                     , Anima.Desktop.Export
+                    , Anima.Desktop.Oidc
     hs-source-dirs:   src
     build-depends:    base >=4.20 && <5
                     , anima2d
@@ -56,6 +57,10 @@ library
                     , gi-glib
                     , gi-gtk3
                     , gi-gio
+                    , crypton
+                    , memory
+                    , network
+                    , time
                     , haskell-gi-base
                     , http-client
                     , http-client-tls
@@ -96,6 +101,11 @@ test-suite spec
                     , directory
                     , filepath
                     , process
+                    , base64-bytestring
+                    , http-client
+                    , http-types
+                    , wai
+                    , warp
                     , text
 
 -- Drives the real window; needs a display session, so it runs on demand (`just desktop-ui`).

@@ -46,6 +46,7 @@ import GI.GdkPixbuf qualified as Pixbuf
 import GI.Gio qualified as Gio
 import GI.Gtk qualified as Gtk
 import GI.Pango qualified as Pango
+import Network.HTTP.Client.TLS qualified as Tls
 
 import Anima.Desktop.Assistant (Model (..), Provider (..), Reply (..), Settings (..), Stop (..), ToolOutcome (..), ToolUse (..), connectModel, defaultSettings, loadSettings, parseSettings, providerName, saveSettings)
 import Anima.Desktop.Backend (Backend (..), Saved (..), localBackend, remoteBackend)
@@ -54,8 +55,9 @@ import Anima.Desktop.Draw (Pictures, drawCel, drawItem, drawItems)
 import Anima.Desktop.Export (Export (..), Fit (..), Format (..), Quality (..), Size (..), Track (..), exportFilm, formatExtension, formatName, keepsAlpha, presets)
 import Anima.Desktop.Geometry (Box (..), boxOf, topmostAt)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
+import Anima.Desktop.Oidc (Oidc (..), Tokens (..), displayName, keychainAccount, newAuth, parseOidc, redirectPort, redirectUri, signIn)
 import Anima.Desktop.Scene (Camera (..), Env (..), cameraAt, celAt, drawFrame, drawLayers, duration, newCache, placement, renderPng)
-import Anima.Desktop.Secrets (ApiKey, keyText, loadKey, parseApiKey, saveKey)
+import Anima.Desktop.Secrets (ApiKey, forgetSecret, keyText, loadKey, loadSecret, parseApiKey, saveKey, saveSecret)
 import Anima.Desktop.Style (accent, applyStyle, celEmpty, celFill, dimText, ground, hairline, iconImage, paperShadow, raised, rgb, rgba, rounded, surface, textColour, uiText, workspace)
 import Anima.Desktop.Video (ffmpegPath, frameAt, lengthOf, newFrames)
 
@@ -809,7 +811,10 @@ buildWindow = do
             cacheDir <- cacheFolder
             b <- case c of
                 Local folder -> localBackend folder
-                Remote url hs -> remoteBackend url hs cacheDir
+                Remote url hs sso -> do
+                    manager <- Tls.newTlsManager
+                    auth <- traverse (\o -> newAuth manager o Nothing) sso
+                    remoteBackend manager url hs auth cacheDir
             modifyIORef' st (\s -> s {backend = Just b, open = Nothing})
             goHome
             watch b
@@ -2818,7 +2823,7 @@ dialogRun d = do
 -- | Where projects live: a folder on this computer, or a server (address, and header lines).
 connectionDialog :: Gtk.Window -> Maybe Connection -> IO (Maybe Connection)
 connectionDialog parent current = do
-    d <- new Gtk.Dialog [#title := "Where projects live", #modal := True, #transientFor := parent, #defaultWidth := 520]
+    d <- new Gtk.Dialog [#title := "Where projects live", #modal := True, #transientFor := parent, #defaultWidth := 560]
     area <- Gtk.dialogGetContentArea d
     folder0 <- defaultFolder
     local <- Gtk.radioButtonNewWithLabel ([] :: [Gtk.RadioButton]) "On this computer, in this folder:"
@@ -2827,22 +2832,97 @@ connectionDialog parent current = do
     remote <- Gtk.radioButtonNewWithLabelFromWidget (Just local) "On my anima2D server, at this address:"
     urlEntry <- Gtk.entryNew
     Gtk.entrySetPlaceholderText urlEntry (Just "https://anim.example.com")
+    -- Keycloak (or any OpenID Connect provider) in front of the server.
+    ssoB <- Gtk.checkButtonNewWithLabel "Sign in with Keycloak (OpenID Connect)"
+    issuerEntry <- Gtk.entryNew
+    Gtk.entrySetPlaceholderText issuerEntry (Just "https://auth.example.com/realms/anima")
+    clientEntry <- Gtk.entryNew
+    Gtk.entrySetText clientEntry "anima2d-desktop"
+    signInB <- Gtk.buttonNewWithLabel "Sign in…"
+    addClass signInB "primary"
+    signOutB <- Gtk.buttonNewWithLabel "Sign out"
+    ssoState <- Gtk.labelNew (Just "")
+    addClass ssoState "dim"
+    Gtk.labelSetXalign ssoState 0
+    Gtk.labelSetLineWrap ssoState True
+    ssoNote <- Gtk.labelNew (Just ("In the realm, make a public client with standard flow and PKCE (S256), and add " <> redirectUri redirectPort <> " to its valid redirect URIs. The sign-in opens in your browser; the app keeps only the refresh token, in the keychain."))
+    addClass ssoNote "dim"
+    Gtk.labelSetLineWrap ssoNote True
+    Gtk.labelSetMaxWidthChars ssoNote 60
+    Gtk.labelSetXalign ssoNote 0
+    ssoGrid <- new Gtk.Grid [#rowSpacing := 6, #columnSpacing := 10]
+    issuerL <- Gtk.labelNew (Just "Realm address")
+    clientL <- Gtk.labelNew (Just "Client ID")
+    forM_ [issuerL, clientL] $ \l -> Gtk.labelSetXalign l 1
+    Gtk.gridAttach ssoGrid issuerL 0 0 1 1
+    Gtk.gridAttach ssoGrid issuerEntry 1 0 1 1
+    Gtk.gridAttach ssoGrid clientL 0 1 1 1
+    Gtk.gridAttach ssoGrid clientEntry 1 1 1 1
+    Gtk.widgetSetHexpand issuerEntry True
+    ssoButtons <- Gtk.boxNew Gtk.OrientationHorizontal 8
+    Gtk.boxPackStart ssoButtons signInB False False 0
+    Gtk.boxPackStart ssoButtons signOutB False False 0
+    Gtk.boxPackStart ssoButtons ssoState True True 0
     hint <- Gtk.labelNew (Just "Headers to send with every request, one per line as Name: value (an access token for a sign-in gate, for example):")
     Gtk.labelSetLineWrap hint True
     headers <- Gtk.textViewNew
-    Gtk.widgetSetSizeRequest headers (-1) 70
+    Gtk.widgetSetSizeRequest headers (-1) 60
     case current of
-        Just (Remote u hs) -> do
+        Just (Remote u hs sso) -> do
             Gtk.toggleButtonSetActive remote True
             Gtk.entrySetText urlEntry u
             buf <- Gtk.textViewGetBuffer headers
             Gtk.textBufferSetText buf (Text.intercalate "\n" [k <> ": " <> v | (k, v) <- hs]) (-1)
+            forM_ sso $ \o -> do
+                Gtk.toggleButtonSetActive ssoB True
+                Gtk.entrySetText issuerEntry o.issuer
+                Gtk.entrySetText clientEntry o.clientId
         _ -> Gtk.toggleButtonSetActive local True
-    widgets <- sequence [toW local, toW folderEntry, toW remote, toW urlEntry, toW hint, toW headers]
+    let
+        ssoNow = do
+            iss <- Gtk.entryGetText issuerEntry
+            cid <- Gtk.entryGetText clientEntry
+            pure (parseOidc (Aeson.object ["issuer" Aeson..= iss, "clientId" Aeson..= cid]))
+        showState = do
+            on' <- Gtk.toggleButtonGetActive ssoB
+            forM_ [toW ssoGrid, toW ssoButtons, toW ssoNote] (>>= (`Gtk.widgetSetSensitive` on'))
+            parsed <- ssoNow
+            case parsed of
+                Right o | on' -> do
+                    kept <- loadSecret (keychainAccount o)
+                    Gtk.labelSetText ssoState (if isJust kept then "Signed in" else "Not signed in")
+                    Gtk.widgetSetSensitive signOutB (isJust kept)
+                _ -> Gtk.labelSetText ssoState ""
+    _ <- on ssoB #toggled showState
+    _ <- on signInB #clicked $ do
+        parsed <- ssoNow
+        case parsed of
+            Left why -> Gtk.labelSetText ssoState why
+            Right o -> do
+                Gtk.labelSetText ssoState "Waiting for the browser…"
+                Gtk.widgetSetSensitive signInB False
+                manager <- Tls.newTlsManager
+                background (signIn manager o redirectPort (\url -> onMain (void (Gtk.showUriOnWindow (Just d) url 0)))) $ \r -> do
+                    Gtk.widgetSetSensitive signInB True
+                    case r of
+                        Left why -> Gtk.labelSetText ssoState ("Not signed in: " <> why)
+                        Right t -> do
+                            kept <- maybe (pure (Left "the provider gave no refresh token (allow offline access for the client)")) (saveSecret (keychainAccount o)) t.refreshToken
+                            Gtk.labelSetText ssoState $ case kept of
+                                Right () -> "Signed in" <> maybe "" (" as " <>) (displayName t)
+                                Left why -> "Signed in, but not kept: " <> why
+                            Gtk.widgetSetSensitive signOutB True
+    _ <- on signOutB #clicked $ do
+        parsed <- ssoNow
+        forM_ parsed $ \o -> forgetSecret (keychainAccount o)
+        showState
+    widgets <- sequence [toW local, toW folderEntry, toW remote, toW urlEntry, toW ssoB, toW ssoGrid, toW ssoButtons, toW ssoNote, toW hint, toW headers]
     forM_ widgets $ \wdg -> do
-        Gtk.widgetSetMarginStart wdg 12
-        Gtk.widgetSetMarginEnd wdg 12
+        Gtk.widgetSetMarginStart wdg 14
+        Gtk.widgetSetMarginEnd wdg 14
         Gtk.boxPackStart area wdg False False 4
+    Gtk.widgetShowAll d
+    showState
     ok <- dialogRun d
     result <-
         if not ok
@@ -2858,6 +2938,8 @@ connectionDialog parent current = do
                         buf <- Gtk.textViewGetBuffer headers
                         (a, b) <- Gtk.textBufferGetBounds buf
                         txt <- Gtk.textBufferGetText buf a b False
+                        useSso <- Gtk.toggleButtonGetActive ssoB
+                        sso <- if useSso then either (const Nothing) Just <$> ssoNow else pure Nothing
                         let
                             hs =
                                 [ (Text.strip k, Text.strip (Text.drop 1 v))
@@ -2867,7 +2949,7 @@ connectionDialog parent current = do
                                 , not (Text.null (Text.strip k))
                                 , not (Text.null v)
                                 ]
-                        pure (Just (Remote (Text.strip u) hs))
+                        pure (Just (Remote (Text.strip u) hs sso))
     Gtk.widgetDestroy d
     pure result
 

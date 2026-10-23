@@ -20,7 +20,7 @@ import Anima.Types.Project (AssetId, Project, ProjectId, ProjectSummary, Revisio
 import Control.Exception (SomeException, try)
 import Data.ByteString (ByteString)
 import Data.Char (toLower)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Text (Text)
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeExtension, (</>))
@@ -34,8 +34,9 @@ import Data.CaseInsensitive qualified as CI
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Network.HTTP.Client qualified as Http
-import Network.HTTP.Client.TLS qualified as Tls
 import Network.HTTP.Types qualified as HttpTypes
+
+import Anima.Desktop.Oidc (Auth (..))
 
 -- | What a save came to.
 data Saved = Saved Revision | Stale Revision | Failed Text
@@ -126,14 +127,30 @@ showError = \case
 {- | A self-hosted server at `base` (e.g. https://anim.example.com), with extra request
 headers (an access token for the gate in front of it); assets are kept in `cacheDir`.
 -}
-remoteBackend :: Text -> [(Text, Text)] -> FilePath -> IO Backend
-remoteBackend base headers cacheDir = do
-    manager <- Http.newManager Tls.tlsManagerSettings
+remoteBackend :: Http.Manager -> Text -> [(Text, Text)] -> Maybe Auth -> FilePath -> IO Backend
+remoteBackend manager base headers auth cacheDir = do
     let
         url path = Text.unpack (Text.dropWhileEnd (== '/') base) <> path
         extra = [(CI.mk (Text.encodeUtf8 k), Text.encodeUtf8 v) | (k, v) <- headers]
         call :: ByteString -> String -> [(HttpTypes.HeaderName, ByteString)] -> Maybe LBS.ByteString -> Int -> IO (Either Text (Http.Response LBS.ByteString))
-        call method path hs body seconds = do
+        -- With a sign-in, every request carries its access token; one the server refuses is
+        -- renewed once and the request sent again.
+        call method path hs body seconds = case auth of
+            Nothing -> send method path hs body seconds
+            Just a -> do
+                tok <- a.bearer
+                case tok of
+                    Left why -> pure (Left why)
+                    Right t -> do
+                        first <- send method path (bearerHeader t : hs) body seconds
+                        case first of
+                            Right res | HttpTypes.statusCode (Http.responseStatus res) == 401 -> do
+                                again <- a.renew
+                                either (pure . Left) (\t' -> send method path (bearerHeader t' : hs) body seconds) again
+                            other -> pure other
+        bearerHeader t = ("Authorization", "Bearer " <> Text.encodeUtf8 t)
+        send :: ByteString -> String -> [(HttpTypes.HeaderName, ByteString)] -> Maybe LBS.ByteString -> Int -> IO (Either Text (Http.Response LBS.ByteString))
+        send method path hs body seconds = do
             r <- try $ do
                 req0 <- Http.parseRequest (url path)
                 let
@@ -149,7 +166,7 @@ remoteBackend base headers cacheDir = do
             pure $ case r of
                 Left (e :: SomeException) -> Left ("the server is out of reach (" <> Text.take 120 (Text.pack (show e)) <> ")")
                 Right res
-                    | HttpTypes.statusCode (Http.responseStatus res) `elem` [301, 302, 303, 307, 401] -> Left "the server asks to sign in: give the access headers in Connection"
+                    | HttpTypes.statusCode (Http.responseStatus res) `elem` [301, 302, 303, 307] || (HttpTypes.statusCode (Http.responseStatus res) == 401 && isNothing auth) -> Left "the server asks to sign in: sign in, or give the access headers, under Settings…"
                     | otherwise -> Right res
         status = HttpTypes.statusCode . Http.responseStatus
         decoded :: (Aeson.FromJSON a) => Http.Response LBS.ByteString -> Either Text a

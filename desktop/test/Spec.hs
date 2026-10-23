@@ -8,9 +8,11 @@ module Main (main) where
 import Anima.Tools (ToolSpec (..))
 import Anima.Types.Parse (Parse (..))
 import Anima.Types.Project
-import Control.Monad (forM_, unless)
+import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Monad (forM_, join, unless, void)
 import Data.Aeson (FromJSON (..), withObject, (.:))
 import Data.Either (lefts)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Data.Maybe (isJust)
 import Data.Text (Text)
@@ -21,14 +23,26 @@ import System.Process (readProcessWithExitCode)
 
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Base64.URL qualified as B64
+import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Lazy.Char8 qualified as LBS8
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEnc
+import Network.HTTP.Client qualified as Http
+import Network.HTTP.Types qualified as HttpTypes
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp qualified as Warp
 
 import Anima.Desktop.Assistant (Reply (..), Stop (..), ToolOutcome (..), ToolUse (..), anthropicReply, anthropicRequest, anthropicResults, openAIReply, openAIRequest, openAIResults)
+import Anima.Desktop.Backend (Backend (..), remoteBackend)
+import Anima.Desktop.Config (Connection (..), connectionValue, parseConnection)
 import Anima.Desktop.Export (Export (..), Fit (..), Format (..), Quality (..), Size (..), Track (..), exportFilm)
 import Anima.Desktop.Make (Ink (..), ShapeTool (..))
+import Anima.Desktop.Oidc (Auth (..), Oidc (..), challengeOf, keychainAccount, newAuth, parseDiscovery, parseOidc, parseTokens, signIn)
 import Anima.Desktop.Scene (Env (..), newCache)
+import Anima.Desktop.Secrets (forgetSecret)
 
 import Anima.Desktop.Fill qualified as Fill
 import Anima.Desktop.Freehand qualified as Freehand
@@ -66,11 +80,87 @@ main = do
     filled <- fillChecks ink
     moved <- transformChecks
     exported <- exportChecks
+    signedIn <- oidcChecks
     let
-        wire = wireChecks <> exported
+        wire = wireChecks <> exported <> signedIn
     forM_ (filled <> moved <> wire) putStrLn
-    putStrLn (show (length filled + length moved) <> " fill and selection checks failed; " <> show (length wire) <> " assistant wire checks failed")
+    putStrLn (show (length filled + length moved) <> " fill and selection checks failed; " <> show (length wire) <> " wire, export and sign-in checks failed")
     unless (null bad && all (either (const False) (const True)) made && null filled && null moved && null wire) exitFailure
+
+{- | The Keycloak sign-in: PKCE as RFC 7636 has it, the provider's documents parsed, and the
+whole flow against a fake provider (discovery, the browser's way back to the loopback
+listener, the code exchange, a refused token renewed and the request sent again).
+-}
+oidcChecks :: IO [String]
+oidcChecks = do
+    let
+        expect what ok = ["oidc: " <> what | not ok]
+        port = 19493
+        back = 19494
+        iss = "http://127.0.0.1:" <> Text.pack (show port) <> "/realms/test"
+        sso = Oidc {issuer = iss, clientId = "spec-client"}
+        discovery = Aeson.object ["issuer" Aeson..= iss, "authorization_endpoint" Aeson..= (iss <> "/auth"), "token_endpoint" Aeson..= (iss <> "/token")]
+        pure' = [] :: [String]
+    challenge <- newIORef ("" :: Text)
+    let
+        idToken = "e30." <> TextEnc.decodeUtf8 (B64.encodeUnpadded "{\"preferred_username\":\"ada\"}") <> ".sig"
+        tokens a r = Aeson.object ["access_token" Aeson..= (a :: Text), "refresh_token" Aeson..= (r :: Text), "expires_in" Aeson..= (60 :: Int), "token_type" Aeson..= ("Bearer" :: Text), "id_token" Aeson..= idToken]
+        json v = Wai.responseLBS HttpTypes.status200 [("Content-Type", "application/json")] (Aeson.encode v)
+        provider req respond = case (Wai.requestMethod req, Wai.pathInfo req) of
+            ("GET", ["realms", "test", ".well-known", "openid-configuration"]) -> respond (json discovery)
+            ("GET", ["realms", "test", "auth"]) -> do
+                let
+                    q k = maybe "" TextEnc.decodeUtf8 (join (lookup k (Wai.queryString req)))
+                writeIORef challenge (q "code_challenge")
+                if q "client_id" /= "spec-client" || q "code_challenge_method" /= "S256"
+                    then respond (Wai.responseLBS HttpTypes.status400 [] "bad request")
+                    else respond (Wai.responseLBS HttpTypes.status302 [("Location", TextEnc.encodeUtf8 (q "redirect_uri" <> "?code=c123&state=" <> q "state"))] "")
+            ("POST", ["realms", "test", "token"]) -> do
+                form <- HttpTypes.parseSimpleQuery . LBS.toStrict <$> Wai.strictRequestBody req
+                want <- readIORef challenge
+                let
+                    f k = maybe "" TextEnc.decodeUtf8 (lookup k form)
+                respond $ case f "grant_type" of
+                    "authorization_code" | f "code" == "c123" && challengeOf (TextEnc.encodeUtf8 (f "code_verifier")) == want -> json (tokens "at1" "rt1")
+                    "refresh_token" | f "refresh_token" `elem` ["rt1", "rt2"] -> json (tokens "at2" "rt2")
+                    _ -> Wai.responseLBS HttpTypes.status400 [("Content-Type", "application/json")] "{\"error\":\"invalid_grant\"}"
+            ("GET", ["api", "projects"]) ->
+                respond
+                    $ if lookup "Authorization" (Wai.requestHeaders req) == Just "Bearer at2"
+                        then json ([] :: [Aeson.Value])
+                        else Wai.responseLBS HttpTypes.status401 [] "expired"
+            _ -> respond (Wai.responseLBS HttpTypes.status404 [] "")
+    server <- forkIO (Warp.run port provider)
+    threadDelay 300000
+    manager <- Http.newManager Http.defaultManagerSettings
+    -- The browser: the provider's page, then where it sends us (the loopback listener).
+    let
+        browser url = void . forkIO $ do
+            req <- Http.parseRequest (Text.unpack url)
+            res <- Http.httpLbs req {Http.redirectCount = 0} manager
+            forM_ (lookup "Location" (Http.responseHeaders res)) $ \loc -> do
+                back' <- Http.parseRequest (BS8.unpack loc)
+                void (Http.httpLbs back' manager)
+    flow <- signIn manager sso back browser
+    listed <- case flow of
+        Right t -> do
+            auth <- newAuth manager sso (Just t)
+            tmp <- getTemporaryDirectory
+            b <- remoteBackend manager (Text.pack ("http://127.0.0.1:" <> show port)) [] (Just auth) tmp
+            r <- b.list
+            who <- auth.signedInAs
+            _ <- forgetSecret (keychainAccount sso)
+            pure (Right (either (const Nothing) (Just . length) r, who))
+        Left e -> pure (Left e)
+    killThread server
+    pure
+        $ pure'
+            <> expect "the PKCE challenge is RFC 7636's" (challengeOf "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+            <> expect "a provider that names another issuer is refused" (either (const True) (const False) (parseDiscovery "https://other.example.com/realms/x" discovery))
+            <> expect "a provider on plain http elsewhere is refused" (either (const True) (const False) (parseOidc (Aeson.object ["issuer" Aeson..= ("http://auth.example.com/realms/a" :: Text), "clientId" Aeson..= ("c" :: Text)])))
+            <> expect "a token error is the provider's words" (parseTokens 0 (Aeson.object ["error" Aeson..= ("invalid_grant" :: Text), "error_description" Aeson..= ("Session not active" :: Text)]) == Left "invalid_grant: Session not active")
+            <> expect "a connection with a sign-in round-trips" (let c = Remote "https://anim.example.com" [] (Just Oidc {issuer = "https://auth.example.com/realms/anima", clientId = "anima2d-desktop"}) in parseConnection (connectionValue c) == Right c)
+            <> expect ("signs in, renews a refused token and lists the projects: " <> show listed) (listed == Right (Just 0, Just "ada"))
 
 -- | The bouncing ball out as each format, checked with ffprobe (skipped without ffmpeg).
 exportChecks :: IO [String]

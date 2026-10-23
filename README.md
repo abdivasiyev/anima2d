@@ -123,7 +123,11 @@ It opens projects from a folder on this computer (the server's own store runs in
 the app, so it works without a network) or from your anima2D server (its address, plus
 any headers your sign-in gate needs). It shares the project format and the parsers with
 the server, so projects move freely between the browser, the iPad and the desktop. Its
-renderer is drawn with Cairo and matches the browser's.
+renderer is drawn with Cairo and matches the browser's. A server behind Keycloak (or any OpenID Connect
+provider) is signed in to from Settings…: give the realm's address and a public client
+with PKCE that allows `http://127.0.0.1:51973/callback`; the sign-in opens in your
+browser, the refresh token is kept in the system keychain, and every request carries
+the access token.
 
 It follows macOS's look: the window buttons on the left, a toolbar in the title bar, the
 system font and controls, a menu bar with the usual shortcuts, and light or dark as the

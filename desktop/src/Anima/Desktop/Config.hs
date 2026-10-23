@@ -8,6 +8,7 @@ module Anima.Desktop.Config
     , parseConnection
     , loadConnection
     , saveConnection
+    , connectionValue
     , defaultFolder
     , cacheFolder
     )
@@ -25,11 +26,15 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy qualified as LBS
 import Data.Text qualified as Text
 
+import Anima.Desktop.Oidc (Oidc, oidcValue, parseOidc)
+
 data Connection
     = -- | Projects in this folder, through the server's own store in the app.
       Local FilePath
-    | -- | A server's address, and headers to send with every request.
-      Remote Text [(Text, Text)]
+    | {- | A server's address, headers to send with every request, and the Keycloak (OpenID
+      Connect) sign-in in front of it, if any.
+      -}
+      Remote Text [(Text, Text)] (Maybe Oidc)
     deriving stock (Eq, Show)
 
 parseConnection :: Aeson.Value -> Either Text Connection
@@ -46,7 +51,11 @@ parseConnection = \case
                 Nothing -> Right []
                 Just (Aeson.Object h) -> traverse header (KeyMap.toList h)
                 Just _ -> Left "headers: expected an object of names and values"
-            Right (Remote url hs)
+            sso <- case KeyMap.lookup "oidc" o of
+                Nothing -> Right Nothing
+                Just Aeson.Null -> Right Nothing
+                Just v -> either (Left . ("oidc: " <>)) (Right . Just) (parseOidc v)
+            Right (Remote url hs sso)
         _ -> Left "kind: expected \"local\" or \"remote\""
     _ -> Left "expected an object"
     where
@@ -82,9 +91,12 @@ loadConnection = do
 saveConnection :: Connection -> IO ()
 saveConnection c = do
     path <- configFile
-    LBS.writeFile path . Aeson.encode $ case c of
-        Local f -> Aeson.object ["kind" Aeson..= ("local" :: Text), "folder" Aeson..= f]
-        Remote u hs -> Aeson.object ["kind" Aeson..= ("remote" :: Text), "url" Aeson..= u, "headers" Aeson..= Aeson.object [Key.fromText k Aeson..= v | (k, v) <- hs]]
+    LBS.writeFile path (Aeson.encode (connectionValue c))
+
+connectionValue :: Connection -> Aeson.Value
+connectionValue = \case
+    Local f -> Aeson.object ["kind" Aeson..= ("local" :: Text), "folder" Aeson..= f]
+    Remote u hs sso -> Aeson.object (["kind" Aeson..= ("remote" :: Text), "url" Aeson..= u, "headers" Aeson..= Aeson.object [Key.fromText k Aeson..= v | (k, v) <- hs]] <> ["oidc" Aeson..= oidcValue o | Just o <- [sso]])
 
 -- | Where projects go on this computer unless another folder is chosen.
 defaultFolder :: IO FilePath
